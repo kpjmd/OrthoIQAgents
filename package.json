@@ -1,0 +1,45 @@
+{
+  "name": "orthoiq-agents",
+  "version": "1.0.0",
+  "description": "AI-powered agent framework for orthopedic medical applications",
+  "main": "src/index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js",
+    "test": "jest",
+    "build": "tsc",
+    "lint": "eslint src/",
+    "example": "node examples/basic-agent.js"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.29.0",
+    "@coinbase/cdp-agentkit-core": "^0.1.2",
+    "@coinbase/cdp-langchain": "^0.1.1",
+    "@langchain/anthropic": "^0.3.7",
+    "@langchain/core": "^0.3.21",
+    "@langchain/langgraph": "^0.2.16",
+    "dotenv": "^16.4.5",
+    "ethers": "^6.13.4",
+    "express": "^4.21.1",
+    "uuid": "^11.0.3",
+    "winston": "^3.15.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.1",
+    "eslint": "^9.15.0",
+    "jest": "^29.7.0",
+    "nodemon": "^3.1.7",
+    "typescript": "^5.7.2"
+  },
+  "keywords": [
+    "ai",
+    "agents",
+    "orthopedic",
+    "medical",
+    "blockchain",
+    "langchain"
+  ],
+  "author": "OrthoIQ Team",
+  "license": "MIT"
+}
