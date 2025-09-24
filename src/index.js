@@ -13,6 +13,7 @@ import AgentCoordinator from './utils/agent-coordinator.js';
 import TokenManager from './utils/token-manager.js';
 import RecoveryMetrics from './utils/recovery-metrics.js';
 import BlockchainUtils from './utils/blockchain-utils.js';
+import CdpAccountManager from './utils/cdp-account-manager.js';
 
 // Import all specialist agents
 import { TriageAgent } from './agents/triage-agent.js';
@@ -34,6 +35,7 @@ class OrthoIQAgentSystem {
     this.tokenManager = new TokenManager();
     this.recoveryMetrics = new RecoveryMetrics();
     this.blockchainUtils = new BlockchainUtils();
+    this.accountManager = new CdpAccountManager();
     
     // Agent registry
     this.agents = {};
@@ -49,6 +51,9 @@ class OrthoIQAgentSystem {
       
       // Initialize blockchain utilities
       await this.initializeBlockchain();
+      
+      // Initialize CDP account manager
+      await this.initializeAccountManager();
       
       // Create and register agents
       await this.createAgents();
@@ -106,17 +111,48 @@ class OrthoIQAgentSystem {
     }
   }
 
+  async initializeAccountManager() {
+    try {
+      if (process.env.ENABLE_BLOCKCHAIN === 'true') {
+        logger.info('🏦 Initializing CDP Account Manager');
+        await this.accountManager.initialize();
+        logger.info('✅ CDP Account Manager initialized');
+      } else {
+        logger.info('ℹ️  CDP Account Manager disabled (blockchain disabled)');
+      }
+    } catch (error) {
+      logger.warn(`⚠️  CDP Account Manager initialization failed: ${error.message}`);
+      // Set account manager to null so agents know not to use it
+      this.accountManager = null;
+    }
+  }
+
   async createAgents() {
     try {
       logger.info('👥 Creating specialist agents');
       
-      // Create all specialist agents
+      // Create all specialist agents - but wait for their initialization
+      const triageAgent = new TriageAgent('OrthoTriage Master', this.accountManager);
+      await this.waitForAgentInitialization(triageAgent);
+      
+      const painWhispererAgent = new PainWhispererAgent('Pain Whisperer', this.accountManager);
+      await this.waitForAgentInitialization(painWhispererAgent);
+      
+      const movementDetectiveAgent = new MovementDetectiveAgent('Movement Detective', this.accountManager);
+      await this.waitForAgentInitialization(movementDetectiveAgent);
+      
+      const strengthSageAgent = new StrengthSageAgent('Strength Sage', this.accountManager);
+      await this.waitForAgentInitialization(strengthSageAgent);
+      
+      const mindMenderAgent = new MindMenderAgent('Mind Mender', this.accountManager);
+      await this.waitForAgentInitialization(mindMenderAgent);
+      
       this.agents = {
-        triage: new TriageAgent('OrthoTriage Master'),
-        painWhisperer: new PainWhispererAgent('Pain Whisperer'),
-        movementDetective: new MovementDetectiveAgent('Movement Detective'),
-        strengthSage: new StrengthSageAgent('Strength Sage'),
-        mindMender: new MindMenderAgent('Mind Mender')
+        triage: triageAgent,
+        painWhisperer: painWhispererAgent,
+        movementDetective: movementDetectiveAgent,
+        strengthSage: strengthSageAgent,
+        mindMender: mindMenderAgent
       };
       
       // Register agents with coordinator
@@ -137,6 +173,20 @@ class OrthoIQAgentSystem {
       throw error;
     }
   }
+  
+  async waitForAgentInitialization(agent, timeout = 30000) {
+    const start = Date.now();
+    
+    while (!agent.walletAddress && (Date.now() - start) < timeout) {
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
+    
+    if (!agent.walletAddress) {
+      logger.warn(`Agent ${agent.name} wallet initialization timed out after ${timeout}ms`);
+    } else {
+      logger.info(`Agent ${agent.name} wallet initialization completed: ${agent.walletAddress}`);
+    }
+  }
 
   async initializeTokenEconomics() {
     try {
@@ -148,10 +198,13 @@ class OrthoIQAgentSystem {
         logger.info(`✓ Wallet initialized for ${agent.name}`);
       }
       
-      // Create agent token contract (if blockchain is available)
-      if (await this.blockchainUtils.isConnected()) {
-        const tokenContract = await this.blockchainUtils.createAgentTokenContract();
-        logger.info(`✓ Token contract: ${tokenContract.tokenAddress}`);
+      // Initialize token contract with first available wallet provider
+      const firstAgent = Object.values(this.agents)[0];
+      if (firstAgent && firstAgent.walletProvider) {
+        const tokenContract = await this.tokenManager.initializeTokenContract(firstAgent.walletProvider);
+        if (tokenContract) {
+          logger.info(`✓ Token contract: ${tokenContract.tokenAddress}`);
+        }
       }
       
       logger.info('✅ Token economics initialized');
@@ -219,6 +272,8 @@ class OrthoIQAgentSystem {
         await this.tokenManager.distributeTokenReward(this.agents.triage.agentId, {
           success: true,
           reason: 'api_triage'
+        }, {
+          walletProvider: this.agents.triage.walletProvider
         });
 
         res.json({
@@ -292,6 +347,8 @@ class OrthoIQAgentSystem {
               reason: 'progress_milestone',
               painReduction: metrics.painReduction || 0,
               functionalImprovement: metrics.functionalImprovement >= 70
+            }, {
+              walletProvider: agent.walletProvider
             });
           }
         }
@@ -337,7 +394,9 @@ class OrthoIQAgentSystem {
 
         const rewards = [];
         for (const agent of Object.values(this.agents)) {
-          const reward = await this.tokenManager.distributeTokenReward(agent.agentId, outcome);
+          const reward = await this.tokenManager.distributeTokenReward(agent.agentId, outcome, {
+            walletProvider: agent.walletProvider
+          });
           rewards.push({ agent: agent.name, tokens: reward.amount });
         }
 
@@ -381,6 +440,16 @@ class OrthoIQAgentSystem {
             break;
           default:
             result = await agent.processMessage(JSON.stringify(assessmentData));
+        }
+
+        // Process outcome for token rewards if outcome data is provided
+        if (assessmentData.outcome && assessmentData.outcome.success) {
+          try {
+            await agent.updateExperienceWithTokens(assessmentData.outcome);
+            logger.info(`Token rewards processed for ${agent.name} based on successful outcome`);
+          } catch (tokenError) {
+            logger.warn(`Token reward processing failed for ${agent.name}: ${tokenError.message}`);
+          }
         }
 
         res.json({

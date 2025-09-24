@@ -2,8 +2,8 @@ import { OrthopedicSpecialist } from './orthopedic-specialist.js';
 import logger from '../utils/logger.js';
 
 export class StrengthSageAgent extends OrthopedicSpecialist {
-  constructor(name = 'Strength Sage') {
-    super(name, 'functional restoration and rehabilitation');
+  constructor(name = 'Strength Sage', accountManager = null) {
+    super(name, 'functional restoration and rehabilitation', accountManager);
     this.strengthAssessments = new Map();
     this.rehabilitationPrograms = new Map();
     this.functionalTests = [];

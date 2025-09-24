@@ -1,6 +1,7 @@
 import { ethers } from 'ethers';
 import logger from './logger.js';
 import { agentConfig } from '../config/agent-config.js';
+import BlockchainUtils from './blockchain-utils.js';
 
 export class TokenManager {
   constructor() {
@@ -8,6 +9,8 @@ export class TokenManager {
     this.agentBalances = new Map();
     this.rewardRules = this.initializeRewardRules();
     this.distributionHistory = [];
+    this.blockchainUtils = new BlockchainUtils();
+    this.tokenContractAddress = null;
     this.networkStats = {
       totalTokensIssued: 0,
       totalRewardsDistributed: 0,
@@ -133,11 +136,12 @@ export class TokenManager {
         const blockchainTx = await this.processBlockchainReward(
           agentBalance.walletAddress,
           rewardAmount,
-          transaction.id
+          transaction.id,
+          additionalData.walletProvider // Pass wallet provider if available
         );
         
         transaction.blockchainTx = blockchainTx.hash;
-        transaction.status = 'confirmed';
+        transaction.status = blockchainTx.isMock ? 'simulated' : 'confirmed';
       } catch (blockchainError) {
         logger.warn(`Blockchain transaction failed, keeping local record: ${blockchainError.message}`);
         transaction.status = 'local_only';
@@ -264,31 +268,78 @@ export class TokenManager {
     return Math.max(0, totalReward);
   }
 
-  async processBlockchainReward(walletAddress, amount, transactionId) {
+  async initializeTokenContract(walletProvider) {
     try {
-      // This is a placeholder for actual blockchain integration
-      // In a real implementation, this would interact with a smart contract
+      if (!walletProvider) {
+        logger.warn('No wallet provider available for token contract initialization');
+        return null;
+      }
       
+      // Initialize blockchain utilities
+      await this.blockchainUtils.initialize();
+      
+      // Create or get existing token contract
+      const tokenContract = await this.blockchainUtils.createAgentTokenContract(walletProvider);
+      this.tokenContractAddress = tokenContract.tokenAddress;
+      
+      logger.info(`Token contract initialized at: ${this.tokenContractAddress}`);
+      return tokenContract;
+    } catch (error) {
+      logger.error(`Token contract initialization failed: ${error.message}`);
+      return null;
+    }
+  }
+
+  async processBlockchainReward(walletAddress, amount, transactionId, walletProvider) {
+    try {
       logger.info(`Processing blockchain reward: ${amount} tokens to ${walletAddress}`);
       
-      // Simulate blockchain transaction
-      const simulatedTx = {
-        hash: `0x${Math.random().toString(16).substring(2, 66)}`,
-        from: '0x0000000000000000000000000000000000000000',
+      if (!this.tokenContractAddress || !walletProvider) {
+        logger.warn('Token contract or wallet provider not available, using simulated transaction');
+        return this.createSimulatedTransaction(walletAddress, amount);
+      }
+      
+      // Mint tokens to the agent wallet
+      const mintResult = await this.blockchainUtils.mintTokensToAgent(
+        this.tokenContractAddress,
+        walletAddress,
+        amount,
+        walletProvider
+      );
+      
+      logger.info(`Blockchain reward processed: ${mintResult.transactionHash}`);
+      
+      return {
+        hash: mintResult.transactionHash,
+        from: '0x0000000000000000000000000000000000000000', // Minting from zero address
         to: walletAddress,
         value: ethers.parseEther(amount.toString()),
-        gasUsed: 21000,
-        blockNumber: Math.floor(Math.random() * 1000000),
-        timestamp: new Date().toISOString()
+        gasUsed: mintResult.gasUsed || 21000,
+        blockNumber: mintResult.blockNumber || 0,
+        timestamp: mintResult.timestamp,
+        isMock: mintResult.isMock || false
       };
-      
-      logger.info(`Simulated blockchain transaction: ${simulatedTx.hash}`);
-      
-      return simulatedTx;
     } catch (error) {
       logger.error(`Blockchain reward processing failed: ${error.message}`);
-      throw error;
+      // Fall back to simulated transaction
+      return this.createSimulatedTransaction(walletAddress, amount);
     }
+  }
+  
+  createSimulatedTransaction(walletAddress, amount) {
+    const simulatedTx = {
+      hash: `0x${Math.random().toString(16).substring(2, 66)}`,
+      from: '0x0000000000000000000000000000000000000000',
+      to: walletAddress,
+      value: ethers.parseEther(amount.toString()),
+      gasUsed: 21000,
+      blockNumber: Math.floor(Math.random() * 1000000),
+      timestamp: new Date().toISOString(),
+      isMock: true
+    };
+    
+    logger.info(`Simulated blockchain transaction: ${simulatedTx.hash}`);
+    return simulatedTx;
   }
 
   async transferTokensBetweenAgents(fromAgentId, toAgentId, amount, reason) {

@@ -2,8 +2,8 @@ import { OrthopedicSpecialist } from './orthopedic-specialist.js';
 import logger from '../utils/logger.js';
 
 export class MindMenderAgent extends OrthopedicSpecialist {
-  constructor(name = 'Mind Mender') {
-    super(name, 'psychological aspects of recovery');
+  constructor(name = 'Mind Mender', accountManager = null) {
+    super(name, 'psychological aspects of recovery', accountManager);
     this.psychologicalAssessments = new Map();
     this.interventionPlans = new Map();
     this.copingStrategies = new Set();

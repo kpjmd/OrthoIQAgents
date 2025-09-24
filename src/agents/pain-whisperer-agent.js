@@ -2,8 +2,8 @@ import { OrthopedicSpecialist } from './orthopedic-specialist.js';
 import logger from '../utils/logger.js';
 
 export class PainWhispererAgent extends OrthopedicSpecialist {
-  constructor(name = 'Pain Whisperer') {
-    super(name, 'pain management and assessment');
+  constructor(name = 'Pain Whisperer', accountManager = null) {
+    super(name, 'pain management and assessment', accountManager);
     this.painScales = {
       numeric: { min: 0, max: 10 },
       functional: ['none', 'mild', 'moderate', 'severe', 'excruciating'],

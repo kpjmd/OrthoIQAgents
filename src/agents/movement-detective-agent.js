@@ -2,8 +2,8 @@ import { OrthopedicSpecialist } from './orthopedic-specialist.js';
 import logger from '../utils/logger.js';
 
 export class MovementDetectiveAgent extends OrthopedicSpecialist {
-  constructor(name = 'Movement Detective') {
-    super(name, 'biomechanics and movement analysis');
+  constructor(name = 'Movement Detective', accountManager = null) {
+    super(name, 'biomechanics and movement analysis', accountManager);
     this.movementPatterns = new Map();
     this.biomechanicalAssessments = [];
     this.compensatoryPatterns = new Set();

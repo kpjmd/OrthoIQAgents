@@ -1,12 +1,13 @@
-import { CdpAgentkit } from '@coinbase/cdp-agentkit-core';
-import { CdpTool } from '@coinbase/cdp-langchain';
+import { CdpEvmWalletProvider, AgentKit } from '@coinbase/agentkit';
+import { getLangChainTools } from '@coinbase/agentkit-langchain';
 import { ChatAnthropic } from '@langchain/anthropic';
 import { agentConfig } from '../config/agent-config.js';
 import logger from '../utils/logger.js';
 import { v4 as uuidv4 } from 'uuid';
+import CdpAccountManager from '../utils/cdp-account-manager.js';
 
 export class BaseAgent {
-  constructor(name, specialization = 'general') {
+  constructor(name, specialization = 'general', accountManager = null) {
     this.name = name;
     this.specialization = specialization;
     this.experience = 0;
@@ -16,6 +17,8 @@ export class BaseAgent {
     this.tokenBalance = 0;
     this.transactionHistory = [];
     this.collaboratingAgents = new Map();
+    this.accountManager = accountManager;
+    this.accountInfo = null;
     
     this.initializeAgent();
   }
@@ -25,24 +28,73 @@ export class BaseAgent {
       // Initialize Claude LLM
       this.llm = new ChatAnthropic({
         anthropicApiKey: agentConfig.claude.apiKey,
-        modelName: 'claude-3-sonnet-20240229',
+        modelName: 'claude-3-sonnet-20250101',
         temperature: 0.7,
       });
 
-      // Initialize CDP AgentKit
-      this.agentKit = await CdpAgentkit.configureWithWallet({
-        cdpApiKeyName: agentConfig.cdp.apiKeyName,
-        cdpPrivateKey: agentConfig.cdp.privateKey,
-        networkId: agentConfig.network.id,
-      });
+      // Initialize blockchain features only if enabled
+      if (process.env.ENABLE_BLOCKCHAIN === 'true') {
+        try {
+          logger.info(`Attempting to initialize CDP wallet for ${this.name}...`);
+          
+          // Step 1: Create CDP account if account manager is available
+          if (this.accountManager) {
+            this.accountInfo = await this.accountManager.createAgentAccount(this.name, this.agentId);
+            logger.info(`Created CDP account for ${this.name}: ${this.accountInfo.address}`);
+            
+            // Optional: Fund account with faucet for testing
+            try {
+              const faucetResult = await this.accountManager.fundAccountWithFaucet(this.accountInfo);
+              if (faucetResult) {
+                logger.info(`Funded ${this.name} account with test ETH: ${faucetResult.explorerUrl}`);
+              }
+            } catch (faucetError) {
+              logger.warn(`Faucet funding failed for ${this.name}, continuing without funds: ${faucetError.message}`);
+            }
+          }
+          
+          // Step 2: Initialize CDP Wallet Provider with the created account
+          const walletConfig = {
+            // Use CDP SDK variables with fallback to AgentKit variables
+            apiKeyId: process.env.CDP_API_KEY_ID || process.env.CDP_API_KEY_NAME,
+            apiKeySecret: process.env.CDP_API_KEY_SECRET || process.env.CDP_API_KEY_PRIVATE_KEY,
+            networkId: agentConfig.network.id,
+            walletSecret: process.env.CDP_WALLET_SECRET,
+          };
+          
+          // If we have a specific account, use its address
+          if (this.accountInfo) {
+            walletConfig.address = this.accountInfo.address;
+          }
+          
+          this.walletProvider = await CdpEvmWalletProvider.configureWithWallet(walletConfig);
 
-      // Get wallet address
-      this.walletAddress = await this.agentKit.wallet.getDefaultAddress();
-      
-      // Initialize CDP tools for LangChain integration
-      this.cdpTools = CdpTool.fromCdpAgentkit(this.agentKit);
+          logger.info(`CDP Wallet Provider created for ${this.name}`);
 
-      logger.info(`Agent ${this.name} initialized successfully with wallet ${this.walletAddress}`);
+          // Step 3: Create AgentKit instance with the wallet provider
+          this.agentKit = await AgentKit.from({
+            walletProvider: this.walletProvider,
+          });
+
+          logger.info(`AgentKit instance created for ${this.name}`);
+
+          // Step 4: Get wallet address
+          this.walletAddress = await this.walletProvider.getAddress();
+          
+          // Initialize CDP tools for LangChain integration
+          this.cdpTools = await getLangChainTools(this.agentKit);
+
+          logger.info(`Agent ${this.name} initialized successfully with CDP wallet ${this.walletAddress}`);
+        } catch (blockchainError) {
+          logger.warn(`Blockchain initialization failed for ${this.name}, running in offline mode: ${blockchainError.message}`);
+          logger.error(`Full error details: ${blockchainError.stack}`);
+          this.walletAddress = `mock_wallet_${this.agentId}`;
+        }
+      } else {
+        // Create mock wallet address for offline mode
+        this.walletAddress = `mock_wallet_${this.agentId}`;
+        logger.info(`Agent ${this.name} initialized successfully (blockchain disabled)`);
+      }
     } catch (error) {
       logger.error(`Failed to initialize agent ${this.name}:`, error);
       throw error;
@@ -204,8 +256,12 @@ export class BaseAgent {
     try {
       logger.info(`${this.name} processing blockchain transaction`);
       
-      // Use CDP AgentKit for blockchain interactions
-      const result = await this.agentKit.run(transactionData);
+      if (!this.walletProvider) {
+        throw new Error('Wallet provider not initialized');
+      }
+      
+      // Use wallet provider for blockchain interactions
+      const result = await this.walletProvider.sendTransaction(transactionData);
       
       const transaction = {
         id: uuidv4(),

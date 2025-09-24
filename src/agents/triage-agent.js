@@ -2,8 +2,8 @@ import { OrthopedicSpecialist } from './orthopedic-specialist.js';
 import logger from '../utils/logger.js';
 
 export class TriageAgent extends OrthopedicSpecialist {
-  constructor(name = 'OrthoTriage Master') {
-    super(name, 'triage and case coordination');
+  constructor(name = 'OrthoTriage Master', accountManager = null) {
+    super(name, 'triage and case coordination', accountManager);
     this.caseQueue = new Map();
     this.specialistNetwork = new Map();
     this.urgencyLevels = ['emergency', 'urgent', 'semi-urgent', 'routine'];

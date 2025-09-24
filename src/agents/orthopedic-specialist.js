@@ -1,13 +1,14 @@
 import { BaseAgent } from './base-agent.js';
-import { CdpAgentkit } from '@coinbase/cdp-agentkit-core';
-import { CdpTool } from '@coinbase/cdp-langchain';
+import agentkit from '@coinbase/agentkit';
+import langchain from '@coinbase/agentkit-langchain';
+const { CdpAgentkit } = agentkit;
+const { CdpTool } = langchain;
 import logger from '../utils/logger.js';
 
 export class OrthopedicSpecialist extends BaseAgent {
-  constructor(name, subspecialty = 'general orthopedics', cdpAgent = null) {
-    super(name, 'orthopedic medicine');
+  constructor(name, subspecialty = 'general orthopedics', accountManager = null) {
+    super(name, 'orthopedic medicine', accountManager);
     this.subspecialty = subspecialty;
-    this.cdpAgent = cdpAgent;
     this.medicalKnowledge = this.initializeMedicalKnowledge();
     this.recoveryMetrics = new Map();
     this.digitalRxHistory = [];

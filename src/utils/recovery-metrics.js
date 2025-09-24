@@ -367,7 +367,7 @@ export class RecoveryMetrics {
       });
     }
     
-    if (progressData.returnToWork && !this.hasMilestone(record, 'return_to_work')) {
+    if (progressUpdate.data.returnToWork && !this.hasMilestone(record, 'return_to_work')) {
       milestones.push({
         type: 'return_to_work',
         achievement: 'Successfully returned to work',
@@ -376,7 +376,7 @@ export class RecoveryMetrics {
       });
     }
     
-    if (progressData.returnToSport && !this.hasMilestone(record, 'return_to_sport')) {
+    if (progressUpdate.data.returnToSport && !this.hasMilestone(record, 'return_to_sport')) {
       milestones.push({
         type: 'return_to_sport',
         achievement: 'Successfully returned to sport',
@@ -664,6 +664,266 @@ export class RecoveryMetrics {
   calculateReturnToActivityRate(records) {
     const returnedToActivity = records.filter(r => r.finalMetrics?.returnToActivity).length;
     return Math.round((returnedToActivity / records.length) * 100);
+  }
+
+  // Missing methods referenced in establishRecoveryGoals
+  calculatePainReductionGoal(currentPainLevel, severity) {
+    const targetReductions = {
+      'mild': 70,
+      'moderate': 60,
+      'severe': 50
+    };
+    
+    const targetReduction = targetReductions[severity] || 60;
+    const targetPainLevel = Math.max(0, currentPainLevel * (1 - targetReduction / 100));
+    
+    return {
+      targetReduction: targetReduction,
+      targetPainLevel: Math.round(targetPainLevel),
+      milestones: this.createPainMilestones(currentPainLevel, targetPainLevel)
+    };
+  }
+
+  calculateFunctionalGoal(currentScore, condition) {
+    const improvementTargets = {
+      'fracture': 80,
+      'arthritis': 65,
+      'sports_injury': 90,
+      'spine_disorder': 70,
+      'general': 75
+    };
+    
+    const targetImprovement = improvementTargets[condition] || 75;
+    const targetScore = Math.min(100, currentScore + targetImprovement);
+    
+    return {
+      targetScore: targetScore,
+      targetImprovement: targetImprovement,
+      milestones: this.createFunctionalMilestones(currentScore, targetScore)
+    };
+  }
+
+  setROMGoals(currentROM, assessment) {
+    const goals = {};
+    
+    Object.keys(currentROM || {}).forEach(joint => {
+      const current = currentROM[joint];
+      const normalROM = this.getNormalROM(joint);
+      const targetROM = Math.min(normalROM, current * 1.3); // 30% improvement or normal, whichever is less
+      
+      goals[joint] = {
+        current: current,
+        target: Math.round(targetROM),
+        normal: normalROM,
+        deficit: Math.max(0, normalROM - current)
+      };
+    });
+    
+    return goals;
+  }
+
+  setStrengthGoals(currentStrength, assessment) {
+    const goals = {};
+    
+    Object.keys(currentStrength || {}).forEach(muscle => {
+      const current = currentStrength[muscle];
+      const targetImprovement = this.getStrengthTarget(muscle, assessment.condition);
+      
+      goals[muscle] = {
+        current: current,
+        target: Math.round(current * (1 + targetImprovement / 100)),
+        improvementTarget: targetImprovement,
+        timeline: this.getStrengthTimeline(muscle, assessment.condition)
+      };
+    });
+    
+    return goals;
+  }
+
+  setActivityGoals(currentLevel, assessment) {
+    const activityProgression = {
+      'sedentary': ['basic_adl', 'walking', 'light_exercise'],
+      'light': ['walking', 'light_exercise', 'moderate_activity'],
+      'moderate': ['moderate_activity', 'sport_specific', 'full_activity'],
+      'active': ['sport_specific', 'full_activity', 'competitive']
+    };
+    
+    const progression = activityProgression[currentLevel] || activityProgression['light'];
+    
+    return {
+      current: currentLevel,
+      progression: progression,
+      finalGoal: progression[progression.length - 1],
+      timeline: this.getActivityTimeline(currentLevel, assessment.condition)
+    };
+  }
+
+  setTimelineGoals(condition, severity) {
+    const baseTimelines = {
+      'fracture': { acute: 2, inflammatory: 4, proliferation: 8, maturation: 12 },
+      'arthritis': { acute: 1, inflammatory: 3, proliferation: 12, maturation: 24 },
+      'sports_injury': { acute: 1, inflammatory: 2, proliferation: 6, maturation: 8 },
+      'spine_disorder': { acute: 2, inflammatory: 4, proliferation: 10, maturation: 16 },
+      'general': { acute: 2, inflammatory: 3, proliferation: 8, maturation: 12 }
+    };
+    
+    const timeline = baseTimelines[condition] || baseTimelines['general'];
+    const severityMultiplier = severity === 'severe' ? 1.3 : severity === 'mild' ? 0.8 : 1.0;
+    
+    return {
+      acute_weeks: Math.ceil(timeline.acute * severityMultiplier),
+      inflammatory_weeks: Math.ceil(timeline.inflammatory * severityMultiplier),
+      proliferation_weeks: Math.ceil(timeline.proliferation * severityMultiplier),
+      maturation_weeks: Math.ceil(timeline.maturation * severityMultiplier),
+      total_weeks: Math.ceil((timeline.acute + timeline.inflammatory + timeline.proliferation + timeline.maturation) * severityMultiplier)
+    };
+  }
+
+  // Helper methods
+  createPainMilestones(current, target) {
+    const steps = 4;
+    const milestones = [];
+    
+    for (let i = 1; i <= steps; i++) {
+      const milestone = current - ((current - target) * (i / steps));
+      milestones.push({
+        week: Math.ceil(i * 3),
+        targetPainLevel: Math.round(milestone),
+        description: `${Math.round(((current - milestone) / current) * 100)}% pain reduction`
+      });
+    }
+    
+    return milestones;
+  }
+
+  createFunctionalMilestones(current, target) {
+    const steps = 4;
+    const milestones = [];
+    
+    for (let i = 1; i <= steps; i++) {
+      const milestone = current + ((target - current) * (i / steps));
+      milestones.push({
+        week: Math.ceil(i * 3),
+        targetScore: Math.round(milestone),
+        description: `${Math.round(((milestone - current) / (100 - current)) * 100)}% functional improvement`
+      });
+    }
+    
+    return milestones;
+  }
+
+  getNormalROM(joint) {
+    const normalRanges = {
+      'shoulder_flexion': 180,
+      'shoulder_abduction': 180,
+      'elbow_flexion': 145,
+      'wrist_flexion': 80,
+      'hip_flexion': 120,
+      'knee_flexion': 135,
+      'ankle_dorsiflexion': 20,
+      'lumbar_flexion': 60
+    };
+    
+    return normalRanges[joint] || 100;
+  }
+
+  getStrengthTarget(muscle, condition) {
+    const targets = {
+      'fracture': 25,
+      'arthritis': 20,
+      'sports_injury': 40,
+      'spine_disorder': 30,
+      'general': 25
+    };
+    
+    return targets[condition] || 25;
+  }
+
+  getStrengthTimeline(muscle, condition) {
+    const timelines = {
+      'fracture': 12,
+      'arthritis': 16,
+      'sports_injury': 8,
+      'spine_disorder': 12,
+      'general': 10
+    };
+    
+    return timelines[condition] || 10;
+  }
+
+  getActivityTimeline(currentLevel, condition) {
+    const baseWeeks = {
+      'fracture': 16,
+      'arthritis': 20,
+      'sports_injury': 10,
+      'spine_disorder': 14,
+      'general': 12
+    };
+    
+    return baseWeeks[condition] || 12;
+  }
+
+  setQOLGoals(currentQOL) {
+    const domains = {
+      'physical_health': currentQOL?.physical_health || 50,
+      'mental_health': currentQOL?.mental_health || 50,
+      'social_function': currentQOL?.social_function || 50,
+      'work_productivity': currentQOL?.work_productivity || 50,
+      'sleep_quality': currentQOL?.sleep_quality || 50,
+      'pain_interference': currentQOL?.pain_interference || 70 // Lower is better for pain interference
+    };
+
+    const goals = {};
+    
+    Object.keys(domains).forEach(domain => {
+      const current = domains[domain];
+      let target, improvementTarget;
+      
+      if (domain === 'pain_interference') {
+        // For pain interference, lower scores are better
+        target = Math.max(10, current * 0.4); // 60% reduction in pain interference
+        improvementTarget = Math.round(((current - target) / current) * 100);
+      } else {
+        // For other domains, higher scores are better
+        target = Math.min(90, current + 30); // Aim for 30-point improvement or 90, whichever is lower
+        improvementTarget = target - current;
+      }
+      
+      goals[domain] = {
+        current: current,
+        target: Math.round(target),
+        improvementTarget: improvementTarget,
+        milestones: this.createQOLMilestones(current, target, domain)
+      };
+    });
+    
+    return goals;
+  }
+
+  createQOLMilestones(current, target, domain) {
+    const steps = 3; // Fewer steps for QOL goals
+    const milestones = [];
+    
+    for (let i = 1; i <= steps; i++) {
+      let milestone;
+      let description;
+      
+      if (domain === 'pain_interference') {
+        milestone = current - ((current - target) * (i / steps));
+        description = `${Math.round(((current - milestone) / current) * 100)}% reduction in pain interference`;
+      } else {
+        milestone = current + ((target - current) * (i / steps));
+        description = `${Math.round(milestone)}/100 ${domain.replace('_', ' ')} score`;
+      }
+      
+      milestones.push({
+        month: i * 2, // QOL goals measured in months
+        targetScore: Math.round(milestone),
+        description: description
+      });
+    }
+    
+    return milestones;
   }
 }
 

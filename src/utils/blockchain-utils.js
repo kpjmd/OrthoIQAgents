@@ -1,4 +1,5 @@
 import { ethers } from 'ethers';
+import { CdpEvmWalletProvider } from '@coinbase/agentkit';
 import logger from './logger.js';
 import { agentConfig } from '../config/agent-config.js';
 
@@ -15,15 +16,25 @@ export class BlockchainUtils {
     try {
       logger.info('Initializing blockchain utilities');
       
+      // Check if blockchain is enabled
+      if (!agentConfig.blockchain.enabled) {
+        logger.info('Blockchain disabled, running in offline mode');
+        return {
+          provider: false,
+          wallet: false,
+          network: 'offline',
+          chainId: 0,
+          enabled: false
+        };
+      }
+      
       // Initialize provider for Base Sepolia testnet
       const rpcUrl = this.getRpcUrl(agentConfig.network.id);
       this.provider = new ethers.JsonRpcProvider(rpcUrl);
       
-      // Initialize wallet if private key is available
-      if (agentConfig.cdp.privateKey) {
-        this.wallet = new ethers.Wallet(agentConfig.cdp.privateKey, this.provider);
-        logger.info(`Wallet initialized: ${this.wallet.address}`);
-      }
+      // Note: CDP private keys should be used with CdpAgentkit, not directly with ethers.js
+      // Individual agents will create their own CDP wallets as needed
+      logger.info(`Blockchain provider initialized for ${agentConfig.network.id}`);
       
       // Get network information
       this.networkInfo = await this.provider.getNetwork();
@@ -31,9 +42,10 @@ export class BlockchainUtils {
       
       return {
         provider: !!this.provider,
-        wallet: !!this.wallet,
+        wallet: false, // Wallets are created by individual agents using CDP
         network: this.networkInfo.name,
-        chainId: Number(this.networkInfo.chainId)
+        chainId: Number(this.networkInfo.chainId),
+        enabled: true
       };
     } catch (error) {
       logger.error(`Failed to initialize blockchain utilities: ${error.message}`);
@@ -53,10 +65,10 @@ export class BlockchainUtils {
 
   async getWalletBalance(address = null) {
     try {
-      const walletAddress = address || this.wallet?.address;
-      if (!walletAddress) {
-        throw new Error('No wallet address available');
+      if (!address) {
+        throw new Error('Wallet address required - BlockchainUtils does not manage wallets directly');
       }
+      const walletAddress = address;
       
       const balance = await this.provider.getBalance(walletAddress);
       const balanceInEth = ethers.formatEther(balance);
@@ -73,10 +85,10 @@ export class BlockchainUtils {
     }
   }
 
-  async sendTransaction(toAddress, amountEth, data = '0x') {
+  async sendTransaction(fromWalletProvider, toAddress, amountEth, data = '0x') {
     try {
-      if (!this.wallet) {
-        throw new Error('Wallet not initialized');
+      if (!fromWalletProvider) {
+        throw new Error('Wallet provider required - pass agent wallet provider as first parameter');
       }
       
       logger.info(`Sending transaction: ${amountEth} ETH to ${toAddress}`);
@@ -87,17 +99,8 @@ export class BlockchainUtils {
         data: data
       };
       
-      // Estimate gas
-      const gasEstimate = await this.provider.estimateGas(tx);
-      tx.gasLimit = gasEstimate;
-      
-      // Get gas price
-      const feeData = await this.provider.getFeeData();
-      tx.maxFeePerGas = feeData.maxFeePerGas;
-      tx.maxPriorityFeePerGas = feeData.maxPriorityFeePerGas;
-      
-      // Send transaction
-      const txResponse = await this.wallet.sendTransaction(tx);
+      // Send transaction using CDP wallet provider
+      const txResponse = await fromWalletProvider.sendTransaction(tx);
       
       logger.info(`Transaction sent: ${txResponse.hash}`);
       
@@ -106,7 +109,7 @@ export class BlockchainUtils {
       
       const transactionRecord = {
         hash: txResponse.hash,
-        from: this.wallet.address,
+        from: await fromWalletProvider.getAddress(),
         to: toAddress,
         value: amountEth,
         gasUsed: receipt.gasUsed.toString(),
@@ -126,18 +129,21 @@ export class BlockchainUtils {
     }
   }
 
-  async deployContract(contractAbi, contractBytecode, constructorArgs = []) {
+  async deployContract(deployerWalletProvider, contractAbi, contractBytecode, constructorArgs = []) {
     try {
-      if (!this.wallet) {
-        throw new Error('Wallet not initialized');
+      if (!deployerWalletProvider) {
+        throw new Error('Deployer wallet provider required');
       }
       
       logger.info('Deploying smart contract');
       
+      // Get signer from wallet provider
+      const signer = await deployerWalletProvider.getSigner();
+      
       const contractFactory = new ethers.ContractFactory(
         contractAbi,
         contractBytecode,
-        this.wallet
+        signer
       );
       
       const contract = await contractFactory.deploy(...constructorArgs);
@@ -223,13 +229,22 @@ export class BlockchainUtils {
     }
   }
 
-  async createAgentTokenContract() {
+  async createAgentTokenContract(deployerWalletProvider) {
     try {
       logger.info('Creating OrthoIQ Agent Token contract');
       
-      // Simple ERC20-like token contract ABI
+      if (!deployerWalletProvider) {
+        logger.warn('No wallet provider available, creating mock token contract');
+        return this.createMockTokenContract();
+      }
+      
+      // Simple ERC20 token contract ABI
       const tokenAbi = [
-        "constructor(string name, string symbol, uint256 totalSupply)",
+        "constructor(string memory name, string memory symbol, uint256 totalSupply)",
+        "function name() view returns (string)",
+        "function symbol() view returns (string)",
+        "function decimals() view returns (uint8)",
+        "function totalSupply() view returns (uint256)",
         "function balanceOf(address owner) view returns (uint256)",
         "function transfer(address to, uint256 amount) returns (bool)",
         "function approve(address spender, uint256 amount) returns (bool)",
@@ -240,11 +255,12 @@ export class BlockchainUtils {
         "event Approval(address indexed owner, address indexed spender, uint256 value)"
       ];
       
-      // This would be the actual bytecode in a real implementation
-      const tokenBytecode = "0x608060405234801561001057600080fd5b50..."; // Placeholder
+      // Basic ERC20 bytecode - in production this would be a real token contract
+      const tokenBytecode = "0x608060405234801561001057600080fd5b506040516111b93803806111b98339818101604052810190610032919061028d565b8260039081610041919061052f565b50816004908161005191906105..."; // Placeholder for now
       
       // Deploy token contract
       const deployment = await this.deployContract(
+        deployerWalletProvider,
         tokenAbi,
         tokenBytecode,
         ["OrthoIQ Agent Token", "OAT", ethers.parseEther("1000000")] // 1M tokens
@@ -279,32 +295,61 @@ export class BlockchainUtils {
     };
   }
 
-  async mintTokensToAgent(tokenAddress, agentAddress, amount) {
+  async mintTokensToAgent(tokenAddress, agentAddress, amount, walletProvider) {
     try {
       logger.info(`Minting ${amount} tokens to agent: ${agentAddress}`);
       
-      // In a real implementation, this would call the mint function
-      const mintResult = await this.interactWithContract(
-        tokenAddress,
-        'mint',
-        [agentAddress, ethers.parseEther(amount.toString())]
-      );
+      if (!walletProvider) {
+        logger.warn('No wallet provider available, returning mock mint result');
+        return this.createMockMintResult(tokenAddress, agentAddress, amount);
+      }
+      
+      // Get the token contract
+      const contractInfo = this.contracts.get(tokenAddress);
+      if (!contractInfo) {
+        throw new Error(`Token contract not found: ${tokenAddress}`);
+      }
+      
+      // Get signer from wallet provider
+      const signer = await walletProvider.getSigner();
+      const contract = contractInfo.contract.connect(signer);
+      
+      // Call mint function
+      const tx = await contract.mint(agentAddress, ethers.parseEther(amount.toString()));
+      const receipt = await tx.wait();
+      
+      const mintResult = {
+        contractAddress: tokenAddress,
+        functionName: 'mint',
+        args: [agentAddress, amount],
+        transactionHash: tx.hash,
+        blockNumber: receipt.blockNumber,
+        gasUsed: receipt.gasUsed.toString(),
+        status: receipt.status === 1 ? 'success' : 'failed',
+        timestamp: new Date().toISOString()
+      };
+      
+      this.transactionHistory.push(mintResult);
       
       return mintResult;
     } catch (error) {
       logger.error(`Token minting failed: ${error.message}`);
       
       // Return mock mint for development
-      return {
-        contractAddress: tokenAddress,
-        functionName: 'mint',
-        args: [agentAddress, amount],
-        transactionHash: `0x${Math.random().toString(16).substring(2, 66)}`,
-        status: 'success',
-        timestamp: new Date().toISOString(),
-        isMock: true
-      };
+      return this.createMockMintResult(tokenAddress, agentAddress, amount);
     }
+  }
+  
+  createMockMintResult(tokenAddress, agentAddress, amount) {
+    return {
+      contractAddress: tokenAddress,
+      functionName: 'mint',
+      args: [agentAddress, amount],
+      transactionHash: `0x${Math.random().toString(16).substring(2, 66)}`,
+      status: 'success',
+      timestamp: new Date().toISOString(),
+      isMock: true
+    };
   }
 
   async transferTokensBetweenAgents(tokenAddress, fromAddress, toAddress, amount) {
@@ -379,11 +424,14 @@ export class BlockchainUtils {
       );
       
       // In a real implementation, this would call a medical records contract
-      const recordTx = await this.sendTransaction(
-        this.wallet.address, // Self-send to record data
-        0, // No ETH transfer
-        outcomeHash // Outcome hash as data
-      );
+      // For now, we'll create a mock transaction record since no wallet is available
+      const recordTx = {
+        id: `mock_outcome_${Date.now()}`,
+        type: 'medical_outcome',
+        data: outcomeHash,
+        timestamp: new Date().toISOString(),
+        note: 'Mock transaction - would require agent wallet for real blockchain recording'
+      };
       
       return {
         patientId,
@@ -438,11 +486,14 @@ export class BlockchainUtils {
       );
       
       // Record reputation on blockchain
-      const reputationTx = await this.sendTransaction(
-        this.wallet.address,
-        0,
-        reputationHash
-      );
+      // For now, we'll create a mock transaction record since no wallet is available
+      const reputationTx = {
+        id: `mock_reputation_${Date.now()}`,
+        type: 'reputation_update',
+        data: reputationHash,
+        timestamp: new Date().toISOString(),
+        note: 'Mock transaction - would require agent wallet for real blockchain recording'
+      };
       
       return {
         agentId,
@@ -461,7 +512,7 @@ export class BlockchainUtils {
     try {
       const blockNumber = await this.provider.getBlockNumber();
       const feeData = await this.provider.getFeeData();
-      const balance = this.wallet ? await this.getWalletBalance() : null;
+      const balance = null; // Wallet balance requires specific address
       
       return {
         networkName: this.networkInfo?.name || 'Unknown',

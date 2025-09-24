@@ -5,12 +5,16 @@ dotenv.config();
 export const agentConfig = {
   // Base Agent Configuration
   cdp: {
+    // Support both AgentKit and SDK variable names for compatibility
     apiKeyName: process.env.CDP_API_KEY_NAME,
+    apiKeyId: process.env.CDP_API_KEY_ID,
     privateKey: process.env.CDP_API_KEY_PRIVATE_KEY,
+    apiKeySecret: process.env.CDP_API_KEY_SECRET,
+    walletSecret: process.env.CDP_WALLET_SECRET,
   },
   
   claude: {
-    apiKey: process.env.CLAUDE_API_KEY,
+    apiKey: process.env.ANTHROPIC_API_KEY,
   },
   
   network: {
