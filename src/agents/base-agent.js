@@ -7,12 +7,12 @@ import { v4 as uuidv4 } from 'uuid';
 import CdpAccountManager from '../utils/cdp-account-manager.js';
 
 export class BaseAgent {
-  constructor(name, specialization = 'general', accountManager = null) {
+  constructor(name, specialization = 'general', accountManager = null, agentId = null) {
     this.name = name;
     this.specialization = specialization;
     this.experience = 0;
     this.confidenceThreshold = agentConfig.agent.minConfidenceThreshold;
-    this.agentId = uuidv4();
+    this.agentId = agentId || uuidv4();
     this.walletAddress = null;
     this.tokenBalance = 0;
     this.transactionHistory = [];
@@ -25,11 +25,22 @@ export class BaseAgent {
 
   async initializeAgent() {
     try {
-      // Initialize Claude LLM
+      // Initialize Claude LLM with model selection based on mode
+      const modelName = process.env.CLAUDE_MODEL || 'claude-4-sonnet-latest'; // Claude 4 Sonnet
+
       this.llm = new ChatAnthropic({
         anthropicApiKey: agentConfig.claude.apiKey,
-        modelName: 'claude-3-sonnet-20250101',
-        temperature: 0.7,
+        modelName: modelName,
+        temperature: 0.3, // Lower temperature for medical accuracy
+        maxTokens: parseInt(process.env.MAX_TOKENS) || 2500, // Balanced for complete responses within timeout
+      });
+
+      // Fast mode LLM (using same model for consistency)
+      this.fastLLM = new ChatAnthropic({
+        anthropicApiKey: agentConfig.claude.apiKey,
+        modelName: process.env.FAST_MODEL || modelName, // Same Sonnet model for fast mode
+        temperature: 0.2, // Even lower for consistency
+        maxTokens: parseInt(process.env.FAST_MAX_TOKENS) || 1000, // Increased for complete responses
       });
 
       // Initialize blockchain features only if enabled
@@ -103,26 +114,74 @@ export class BaseAgent {
 
   async processMessage(message, context = {}) {
     try {
-      logger.debug(`Agent ${this.name} processing message: ${message}`);
+      const { mode = 'fast', timeout = 35000 } = context; // Optimized timeout for reliability
+      logger.debug(`Agent ${this.name} processing message in ${mode} mode`);
       
-      // Basic message processing - to be overridden by specialized agents
-      const response = await this.llm.invoke([
+      // Ensure message is a string - critical fix for LangChain compatibility
+      let messageContent;
+      if (typeof message === 'string') {
+        messageContent = message;
+      } else if (typeof message === 'object' && message !== null) {
+        // Handle object messages (from prompt manager)
+        if (message.content) {
+          messageContent = message.content;
+        } else {
+          messageContent = JSON.stringify(message);
+        }
+      } else {
+        messageContent = String(message || '');
+      }
+      
+      if (!messageContent.trim()) {
+        throw new Error('Empty or invalid message content');
+      }
+      
+      // Select LLM based on mode
+      const llm = mode === 'fast' ? this.fastLLM : this.llm;
+      
+      // Create promise for LLM invocation with proper string content
+      const llmPromise = llm.invoke([
         {
           role: 'system',
-          content: this.getSystemPrompt(),
+          content: mode === 'fast' ? this.getFastSystemPrompt() : this.getSystemPrompt(),
         },
         {
           role: 'user',
-          content: message,
+          content: messageContent,
         },
       ]);
-
+      
+      // Add timeout
+      const timeoutPromise = new Promise((_, reject) => 
+        setTimeout(() => reject(new Error(`Processing timeout after ${timeout}ms`)), timeout)
+      );
+      
+      // Race between response and timeout
+      const response = await Promise.race([llmPromise, timeoutPromise]);
+      
       this.updateExperience();
+      
+      // Parse JSON response if in fast mode
+      if (mode === 'fast') {
+        try {
+          return JSON.parse(response.content);
+        } catch {
+          return response.content; // Fallback if not valid JSON
+        }
+      }
+      
       return response.content;
     } catch (error) {
       logger.error(`Error processing message in agent ${this.name}:`, error);
       throw error;
     }
+  }
+  
+  getFastSystemPrompt() {
+    // Optimized prompt for fast responses
+    return `You are ${this.name}, specialized in ${this.specialization}.
+Provide clear, concise prose responses with markdown formatting.
+Be direct and actionable. Focus on critical clinical information.`;
   }
 
   getSystemPrompt() {
@@ -290,6 +349,115 @@ export class BaseAgent {
 
   canHandle(task) {
     return this.getConfidence(task) >= this.confidenceThreshold;
+  }
+
+  /**
+   * Format structured agent response into user-friendly markdown
+   * @param {Object} structuredData - The structured assessment data
+   * @returns {String} - Polished markdown text ready for display
+   */
+  formatUserFriendlyResponse(structuredData) {
+    const {
+      specialist,
+      rawResponse,
+      urgencyLevel,
+      confidence
+    } = structuredData;
+
+    let markdown = `# ${specialist}\n\n`;
+
+    // Add urgency indicator at top if present
+    if (urgencyLevel && (urgencyLevel === 'emergency' || urgencyLevel === 'urgent')) {
+      const urgencyEmoji = urgencyLevel === 'emergency' ? '🚨' : '⚠️';
+      markdown += `${urgencyEmoji} **${urgencyLevel.toUpperCase()}**\n\n`;
+    }
+
+    // Primary content - the LLM's response
+    if (rawResponse) {
+      // Handle both string and object responses
+      let responseText = typeof rawResponse === 'string'
+        ? rawResponse
+        : JSON.stringify(rawResponse, null, 2);
+
+      // Clean up JSON formatting if present
+      if (responseText.startsWith('{') || responseText.startsWith('[')) {
+        try {
+          const parsed = JSON.parse(responseText);
+          // If it's a structured object, format it nicely
+          responseText = this.formatStructuredResponse(parsed);
+        } catch (e) {
+          // If parsing fails, use as-is
+        }
+      }
+
+      markdown += responseText + '\n\n';
+    }
+
+    // Minimal footer with confidence
+    if (confidence) {
+      markdown += `---\n\n`;
+      markdown += `*Confidence: ${Math.round(confidence * 100)}%*\n`;
+    }
+
+    return markdown;
+  }
+
+  // Helper to format structured JSON responses into readable text
+  formatStructuredResponse(data) {
+    let text = '';
+
+    // Handle common response patterns
+    if (data.assessment) {
+      text += this.formatSection('Assessment', data.assessment);
+    }
+    if (data.clinical_reasoning || data.clinicalReasoning) {
+      text += this.formatSection('Clinical Reasoning', data.clinical_reasoning || data.clinicalReasoning);
+    }
+    if (data.neuromuscularReasoning) {
+      text += this.formatSection('Neuromuscular Analysis', data.neuromuscularReasoning);
+    }
+    if (data.painNeuroscienceReasoning) {
+      text += this.formatSection('Pain Neuroscience', data.painNeuroscienceReasoning);
+    }
+    if (data.psychological_assessment) {
+      text += this.formatSection('Psychological Assessment', data.psychological_assessment);
+    }
+    if (data.specificProtocol || data.specific_protocol) {
+      text += this.formatSection('Specific Protocol', data.specificProtocol || data.specific_protocol);
+    }
+    if (data.recommendations) {
+      text += this.formatSection('Recommendations', data.recommendations);
+    }
+    if (data.progressionCriteria || data.progression_criteria) {
+      text += this.formatSection('Progression Criteria', data.progressionCriteria || data.progression_criteria);
+    }
+    if (data.redFlags || data.red_flags) {
+      text += this.formatSection('Red Flags', data.redFlags || data.red_flags);
+    }
+
+    // If nothing formatted, just stringify nicely
+    if (!text) {
+      text = JSON.stringify(data, null, 2);
+    }
+
+    return text;
+  }
+
+  formatSection(title, content) {
+    let text = `**${title}:**\n\n`;
+
+    if (typeof content === 'string') {
+      text += content + '\n\n';
+    } else if (Array.isArray(content)) {
+      content.forEach(item => {
+        text += `- ${typeof item === 'string' ? item : JSON.stringify(item)}\n`;
+      });
+      text += '\n';
+    } else if (typeof content === 'object') {
+      text += JSON.stringify(content, null, 2) + '\n\n';
+    }
+
+    return text;
   }
 }
 

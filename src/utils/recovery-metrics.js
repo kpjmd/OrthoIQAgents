@@ -925,6 +925,35 @@ export class RecoveryMetrics {
     
     return milestones;
   }
+
+  async updatePatientOutcome(patientId, outcomeData) {
+    try {
+      const journey = this.patientRecords.get(patientId);
+      
+      if (!journey) {
+        logger.warn(`Patient journey not found for ${patientId}`);
+        return null;
+      }
+      
+      // Update journey with outcome feedback
+      journey.feedbackReceived = true;
+      journey.userSatisfaction = outcomeData.satisfaction;
+      journey.outcomeSuccess = outcomeData.outcomeSuccess;
+      journey.lastFeedbackUpdate = new Date().toISOString();
+      
+      logger.info(`Updated patient outcome for ${patientId} with feedback`);
+      
+      return {
+        patientId,
+        updated: true,
+        satisfaction: outcomeData.satisfaction,
+        success: outcomeData.outcomeSuccess
+      };
+    } catch (error) {
+      logger.error(`Error updating patient outcome: ${error.message}`);
+      throw error;
+    }
+  }
 }
 
 export default RecoveryMetrics;

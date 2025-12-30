@@ -1,9 +1,11 @@
 import { OrthopedicSpecialist } from './orthopedic-specialist.js';
 import logger from '../utils/logger.js';
+import { extractBodyPartFromQuery, extractSportActivity, extractTimeline, extractInjuryMechanism } from '../utils/body-part-extractor.js';
 
 export class PainWhispererAgent extends OrthopedicSpecialist {
   constructor(name = 'Pain Whisperer', accountManager = null) {
-    super(name, 'pain management and assessment', accountManager);
+    super(name, 'pain management and assessment', accountManager, 'painWhisperer');
+    this.agentType = 'pain_whisperer';
     this.painScales = {
       numeric: { min: 0, max: 10 },
       functional: ['none', 'mild', 'moderate', 'severe', 'excruciating'],
@@ -67,84 +69,172 @@ export class PainWhispererAgent extends OrthopedicSpecialist {
     Your goal is to minimize suffering while maximizing function and quality of life through comprehensive, compassionate, and evidence-based pain management.`;
   }
 
-  async assessPain(painData) {
+  async assessPain(painData, context = {}) {
     try {
+      const startTime = Date.now();
       logger.info(`${this.name} conducting comprehensive pain assessment`);
-      
+
+      // Extract dual-track data if present
+      const { rawQuery, enableDualTrack } = painData;
+
+      // 🎯 PRE-EXTRACT body part and sport BEFORE building prompt
+      const bodyPart = extractBodyPartFromQuery(rawQuery, painData);
+      const sport = extractSportActivity(rawQuery);
+      const timeline = extractTimeline(rawQuery, painData);
+      const mechanism = extractInjuryMechanism(rawQuery, painData);
+      const age = painData.age || 'unknown age';
+
       const assessmentPrompt = `
-        COMPREHENSIVE PAIN ASSESSMENT:
-        
-        Pain Data: ${JSON.stringify(painData)}
-        
-        Conduct thorough pain evaluation including:
-        
-        1. PAIN CHARACTERIZATION:
-           - Intensity assessment (0-10 scale)
-           - Quality descriptors (sharp, dull, burning, etc.)
-           - Location and radiation patterns
-           - Temporal characteristics (constant, intermittent)
-           - Aggravating and relieving factors
-           
-        2. FUNCTIONAL IMPACT ANALYSIS:
-           - Activities of daily living affected
-           - Work/occupation limitations
-           - Sleep quality and patterns
-           - Recreational activity restrictions
-           - Social interaction changes
-           
-        3. PAIN PHENOTYPING:
-           - Nociceptive vs neuropathic components
-           - Central sensitization indicators
-           - Inflammatory markers
-           - Psychosocial contributors
-           
-        4. PSYCHOLOGICAL ASSESSMENT:
-           - Pain catastrophizing tendencies
-           - Fear-avoidance behaviors
-           - Mood and anxiety screening
-           - Coping strategies evaluation
-           - Social support assessment
-           
-        5. MEDICATION HISTORY:
-           - Current analgesic regimen
-           - Effectiveness and side effects
-           - Opioid exposure and tolerance
-           - Allergies and contraindications
-           
-        6. RISK STRATIFICATION:
-           - Acute to chronic transition risk
-           - Addiction potential assessment
-           - Comorbidity considerations
-           - Red flag symptoms
-           
-        7. FUNCTIONAL GOALS:
-           - Patient-specific objectives
-           - Activity return priorities
-           - Quality of life targets
-           - Pain reduction expectations
-           
-        Provide comprehensive assessment with evidence-based recommendations.
+You are an expert in pain neuroscience and management. Think deeply as a pain specialist.
+
+🎯 PATIENT'S QUESTION: "${rawQuery || 'Pain assessment requested'}"
+
+📋 PAIN CONTEXT:
+- Pain Level: ${painData.painLevel || 'Unknown'}/10
+- Body Part: ${bodyPart || 'Unspecified'}
+- Timeline: ${timeline ? `${timeline.value} ${timeline.unit}s ago (${timeline.phase} phase, Day ${timeline.totalDays})` : 'Unknown'}
+- Mechanism: ${mechanism || 'Unknown'}
+- Age: ${age}
+- Sport: ${sport || 'Not specified'}
+
+🧠 THINK LIKE A PAIN SPECIALIST:
+${timeline && mechanism ? `
+- What is the nociceptive state at ${timeline.phase} phase after ${mechanism} injury?
+- What pain mechanisms are active (inflammatory, neuropathic, central)?
+- Is there a pain-spasm-pain cycle maintaining symptoms?
+- How is the nervous system interpreting threat after this ${mechanism} injury?
+` : `
+- What is the nociceptive state (sensitization level)?
+- What pain mechanisms are active (inflammatory, neuropathic, central)?
+- Is there a pain-spasm-pain cycle?
+- How is the nervous system interpreting threat?
+`}
+
+⚠️ PROVIDE EXPERT-LEVEL PAIN MANAGEMENT:
+
+1. **Pain Neuroscience Reasoning**:
+   ${painData.painLevel >= 6 && timeline && timeline.phase === 'Early Proliferation' ?
+   `Example: "${painData.painLevel}/10 pain with fluctuating swelling at ${timeline.phase} phase suggests ongoing nociceptive sensitization. The pain-spasm-pain cycle is likely active, where pain causes muscle guarding, which increases joint stress, perpetuating inflammation."` :
+   `Explain the pain neuroscience: What sensitization level? What cycles are maintaining pain? NOT generic "multimodal approach"`}
+
+2. **Specific Pain Management Protocol**:
+   - Ice: 15-20 min post-activity (NOT before, as this reduces muscle activation)
+   - Compression: Sleeve during daytime, remove at night for circulation
+   - Elevation: 3-4x daily, 20 min above heart level
+   - Swelling monitoring: If morning swelling increases >5mm next day, reduce activity load 50%
+   - NOT: "Multimodal pain management approach"
+
+3. **Nervous System De-escalation**:
+   - Pain education about healing vs harm at ${timeline ? timeline.phase : 'current phase'}
+   - Acceptable pain levels: 0-3/10 during rehab, returns to baseline after
+   - Flare-ups are normal at this stage, not setbacks
+
+4. **Red Flags to Assess**:
+   ${bodyPart === 'Knee' && mechanism === 'twist' ?
+   `- Increasing swelling despite rest → imaging needed
+   - Locking/catching → possible meniscus tear
+   - Hot, red joint with fever → rule out infection` :
+   `- Progressive worsening pain
+   - Neurological changes (numbness, weakness)
+   - Systemic symptoms (fever, malaise)`}
+
+Pain Data: ${JSON.stringify(painData)}
+
+        ${enableDualTrack && rawQuery ? `
+🎯 REMEMBER: Your PRIMARY task is answering: "${rawQuery}"
+        ` : ''}
+
+        Provide your response as readable prose with markdown headers (## for sections).
+        Write naturally as a pain specialist explaining findings and recommendations to the patient.
+        Use bullet points for lists, but write in clear, clinical narrative format.
       `;
       
-      const assessment = await this.processMessage(assessmentPrompt);
-      
+      const assessment = await this.processMessage(assessmentPrompt, context);
+      const responseTime = Date.now() - startTime;
+
+      // Parse and structure the response
+      const painScore = this.extractPainScore(assessment, painData);
+      const functionalImpact = this.extractFunctionalImpact(assessment);
+      const riskLevel = this.extractRiskLevel(assessment);
+
+      // Build structured response per Task 1.2
       const painAssessment = {
-        assessmentId: `pain_${Date.now()}`,
-        agent: this.name,
-        agentId: this.agentId,
-        patientData: painData,
-        assessment,
-        painScore: this.extractPainScore(assessment),
-        functionalImpact: this.extractFunctionalImpact(assessment),
-        riskLevel: this.extractRiskLevel(assessment),
+        // Standard fields
+        specialist: this.name,
+        specialistType: 'painWhisperer',
+
+        // Structured assessment
+        assessment: {
+          primaryFindings: [
+            `Pain level: ${painScore}/10`,
+            `Functional impact: ${functionalImpact}`,
+            `Chronicity risk: ${riskLevel}`,
+            painData.location ? `Location: ${painData.location}` : 'Location unspecified'
+          ],
+          confidence: this.getConfidence('pain_assessment'),
+          dataQuality: painData.painLevel !== undefined ? 0.9 : 0.5,
+          clinicalImportance: painScore >= 7 ? 'high' : painScore >= 4 ? 'medium' : 'low'
+        },
+
+        // Raw LLM response for reference
+        rawResponse: assessment,
+
+        // Recommendations come from LLM rawResponse, not hardcoded
+        recommendations: [],
+
+        // Key findings with metadata
+        keyFindings: [
+          {
+            finding: `Pain severity ${painScore}/10 with ${functionalImpact} functional impact`,
+            confidence: 0.85,
+            clinicalRelevance: painScore >= 7 ? 'high' : 'medium',
+            requiresMDReview: painScore >= 9 || riskLevel === 'high'
+          }
+        ],
+
+        // Inter-agent questions
+        questionsForAgents: [
+          {
+            targetAgent: 'movementDetective',
+            question: 'Are there movement patterns contributing to pain maintenance?',
+            priority: 'high'
+          },
+          {
+            targetAgent: 'mindMender',
+            question: 'Are psychological factors amplifying pain perception?',
+            priority: functionalImpact === 'severe' ? 'high' : 'medium'
+          }
+        ],
+
+        // Follow-up questions for patient
+        followUpQuestions: [
+          'What activities specifically trigger or worsen your pain?',
+          'How does the pain affect your sleep quality?',
+          'What pain relief methods have you already tried?'
+        ],
+
+        // Agreement with triage assessment
+        agreementWithTriage: 'full',
+
+        // Standard metadata
         confidence: this.getConfidence('pain_assessment'),
-        timestamp: new Date().toISOString()
+        responseTime: responseTime,
+        timestamp: new Date().toISOString(),
+        status: 'success',
+
+        // Pain-specific additional data
+        painScore: painScore,
+        functionalImpact: functionalImpact,
+        riskLevel: riskLevel
       };
-      
+
+      // Generate user-friendly markdown response
+      painAssessment.response = this.formatUserFriendlyResponse(painAssessment);
+
       // Store in tracking history
       this.painTrackingHistory.push(painAssessment);
       this.updateExperience();
-      
+
       return painAssessment;
     } catch (error) {
       logger.error(`Error in pain assessment: ${error.message}`);
@@ -402,9 +492,38 @@ export class PainWhispererAgent extends OrthopedicSpecialist {
     }
   }
 
-  extractPainScore(assessment) {
-    const match = assessment.match(/pain\s+(?:score|level|intensity).*?(\d+)(?:\/10|\s+out\s+of\s+10)/i);
-    return match ? parseInt(match[1]) : null;
+  extractPainScore(assessment, painData = {}) {
+    // ✅ FIX: Check painData.painLevel FIRST before trying to extract from text
+    if (painData.painLevel !== undefined && painData.painLevel !== null) {
+      const painLevel = parseInt(painData.painLevel);
+      if (!isNaN(painLevel) && painLevel >= 0 && painLevel <= 10) {
+        return painLevel;
+      }
+    }
+
+    // Fall back to extracting from assessment text
+    const patterns = [
+      /pain\s+(?:score|level|intensity|severity)[:\s]+(\d+)(?:\/10|\s+out\s+of\s+10)?/i,
+      /(\d+)\/10\s+pain/i,
+      /pain[:\s]+(\d+)(?:\/10)?/i,
+      /rate.*?pain.*?(\d+)/i,
+      /(\d+)\s+(?:on|out\s+of).*?pain\s+scale/i
+    ];
+
+    for (const pattern of patterns) {
+      const match = assessment.match(pattern);
+      if (match && parseInt(match[1]) <= 10) {
+        return parseInt(match[1]);
+      }
+    }
+
+    // If no explicit score found, try to infer from severity descriptions
+    const lowerAssessment = assessment.toLowerCase();
+    if (lowerAssessment.includes('severe') || lowerAssessment.includes('excruciating')) return 8;
+    if (lowerAssessment.includes('moderate')) return 5;
+    if (lowerAssessment.includes('mild') || lowerAssessment.includes('minimal')) return 3;
+
+    return null;
   }
 
   extractFunctionalImpact(assessment) {
@@ -444,6 +563,25 @@ export class PainWhispererAgent extends OrthopedicSpecialist {
       return progressData.functionalScore.improvement || 0;
     }
     return 0;
+  }
+
+  getConfidence(task) {
+    // Override base confidence with pain-specific expertise
+    const painTasks = ['pain_assessment', 'pain_management', 'pain_monitoring', 'consultation'];
+    const isPainTask = painTasks.some(t => task.toLowerCase().includes(t.toLowerCase()));
+
+    // Base confidence starts higher for pain-related tasks
+    let baseConfidence = isPainTask ? 0.75 : 0.45;
+
+    // Experience bonus (up to 0.2)
+    const experienceBonus = Math.min(this.experience * 0.005, 0.2);
+
+    // Historical accuracy bonus based on successful assessments
+    const accuracyBonus = this.painTrackingHistory.length > 0
+      ? Math.min(this.painTrackingHistory.length * 0.01, 0.05)
+      : 0;
+
+    return Math.min(baseConfidence + experienceBonus + accuracyBonus, 0.95);
   }
 
   getPainStatistics() {

@@ -6,8 +6,8 @@ const { CdpTool } = langchain;
 import logger from '../utils/logger.js';
 
 export class OrthopedicSpecialist extends BaseAgent {
-  constructor(name, subspecialty = 'general orthopedics', accountManager = null) {
-    super(name, 'orthopedic medicine', accountManager);
+  constructor(name, subspecialty = 'general orthopedics', accountManager = null, agentId = null) {
+    super(name, 'orthopedic medicine', accountManager, agentId);
     this.subspecialty = subspecialty;
     this.medicalKnowledge = this.initializeMedicalKnowledge();
     this.recoveryMetrics = new Map();

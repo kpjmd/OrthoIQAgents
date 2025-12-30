@@ -15,6 +15,8 @@ export const agentConfig = {
   
   claude: {
     apiKey: process.env.ANTHROPIC_API_KEY,
+    maxTokens: parseInt(process.env.MAX_TOKENS) || 2500,
+    fastMaxTokens: parseInt(process.env.FAST_MAX_TOKENS) || 1000,
   },
   
   network: {

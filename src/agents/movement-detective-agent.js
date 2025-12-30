@@ -1,9 +1,11 @@
 import { OrthopedicSpecialist } from './orthopedic-specialist.js';
 import logger from '../utils/logger.js';
+import { extractBodyPartFromQuery, extractSportActivity, getBodyPartSpecificPatterns, extractTimeline, extractInjuryMechanism, extractInjuryContext } from '../utils/body-part-extractor.js';
 
 export class MovementDetectiveAgent extends OrthopedicSpecialist {
   constructor(name = 'Movement Detective', accountManager = null) {
-    super(name, 'biomechanics and movement analysis', accountManager);
+    super(name, 'biomechanics and movement analysis', accountManager, 'movementDetective');
+    this.agentType = 'movement_detective';
     this.movementPatterns = new Map();
     this.biomechanicalAssessments = [];
     this.compensatoryPatterns = new Set();
@@ -67,94 +69,175 @@ export class MovementDetectiveAgent extends OrthopedicSpecialist {
     Your mission is to decode movement mysteries, identify dysfunction patterns, and prescribe targeted interventions that restore optimal movement and prevent future injury through biomechanically sound approaches.`;
   }
 
-  async analyzeMovementPattern(movementData) {
+  async analyzeMovementPattern(movementData, context = {}) {
     try {
+      const startTime = Date.now();
       logger.info(`${this.name} analyzing movement patterns`);
-      
+
+      // Extract dual-track data if present
+      const { rawQuery, enableDualTrack } = movementData;
+
+      // 🎯 PRE-EXTRACT context BEFORE building prompt
+      const bodyPart = extractBodyPartFromQuery(rawQuery, movementData);
+      const sport = extractSportActivity(rawQuery);
+      const timeline = extractTimeline(rawQuery, movementData);
+      const mechanism = extractInjuryMechanism(rawQuery, movementData);
+      const injuryContext = extractInjuryContext(rawQuery);
+      const age = movementData.age || 'unknown age';
+
+      // Get body-part-specific patterns
+      const relevantPatterns = bodyPart ? getBodyPartSpecificPatterns(bodyPart) : {};
+
       const analysisPrompt = `
-        COMPREHENSIVE MOVEMENT PATTERN ANALYSIS:
-        
-        Movement Data: ${JSON.stringify(movementData)}
-        
-        Conduct thorough biomechanical assessment including:
-        
-        1. STATIC POSTURAL ASSESSMENT:
-           - Sagittal plane alignment (anterior/posterior view)
-           - Frontal plane assessment (lateral view)
-           - Transverse plane evaluation (rotational components)
-           - Postural deviations and asymmetries
-           - Core stability and alignment
-           
-        2. DYNAMIC MOVEMENT SCREENING:
-           - Functional movement patterns
-           - Movement quality assessment
-           - Asymmetries and compensations
-           - Range of motion limitations
-           - Stability and mobility balance
-           
-        3. GAIT ANALYSIS:
-           - Stance phase abnormalities
-           - Swing phase deviations
-           - Cadence and stride characteristics
-           - Ground reaction forces
-           - Compensatory mechanisms
-           
-        4. KINETIC CHAIN EVALUATION:
-           - Proximal to distal force transmission
-           - Joint coupling patterns
-           - Muscle activation sequences
-           - Force production and absorption
-           - Energy transfer efficiency
-           
-        5. COMPENSATORY PATTERN IDENTIFICATION:
-           - Primary dysfunction vs compensation
-           - Adaptation strategies
-           - Movement substitutions
-           - Risk for secondary injury
-           
-        6. SPORT/ACTIVITY-SPECIFIC ANALYSIS:
-           - Task-specific movement demands
-           - Performance limitations
-           - Injury risk factors
-           - Return-to-activity readiness
-           
-        7. NEUROMUSCULAR CONTROL:
-           - Motor control strategies
-           - Proprioceptive awareness
-           - Reactive balance responses
-           - Anticipatory adjustments
-           
-        Provide detailed biomechanical analysis with specific dysfunction patterns identified.
+You are an expert in biomechanics and arthrokinematics. Think deeply as a movement specialist.
+
+🎯 PATIENT'S QUESTION: "${rawQuery || 'Movement assessment requested'}"
+
+📋 INJURY CONTEXT:
+- Body Part: ${bodyPart || 'Unspecified'}
+- Mechanism: ${mechanism || 'Unknown'}
+- Timeline: ${timeline ? `${timeline.value} ${timeline.unit}s ago (${timeline.phase} phase, Day ${timeline.totalDays})` : 'Unknown'}
+- Age: ${age}
+- Sport: ${sport || 'Not specified'}
+- Context: ${injuryContext || 'Not specified'}
+
+🧠 THINK LIKE A MOVEMENT SPECIALIST:
+${mechanism && bodyPart ? `
+- What joint mechanics were disrupted by this ${mechanism} injury to the ${bodyPart}?
+- What arthrokinematics (gliding, rolling, spinning) need restoration?
+- How is the kinetic chain compensating for this dysfunction?
+- What movement patterns are at risk due to this ${timeline ? timeline.phase + ' phase' : ''} injury?
+` : `
+- What movement patterns are dysfunctional based on the symptoms?
+- How does this affect the kinetic chain proximally and distally?
+- What arthrokinematic restrictions need addressing?
+`}
+
+⚠️ PROVIDE EXPERT-LEVEL BIOMECHANICAL ANALYSIS:
+
+1. **Clinical Reasoning** (Explain the biomechanics):
+   ${mechanism === 'twist' && bodyPart === 'Knee' ? 'Example: "The twisting mechanism likely disrupted tibiofemoral arthrokinematics. Rotational forces may have damaged meniscal or ligamentous structures. The joint\'s normal gliding and rolling mechanics need restoration to prevent compensatory stress in the hip and ankle kinetic chain."' : 'Explain WHAT was disrupted biomechanically and WHY it matters for function and recovery.'}
+
+2. **Specific Movement Restoration Protocol**:
+   - Provide EXACT exercises with sets/reps/frequency/progression
+   - Example: "Patellar mobilizations: 4 directions, 30 seconds each, 3x/day"
+   - Example: "Heel slides for ROM: 3 sets of 15, twice daily, progress when reaching 0-120°"
+   - NOT generic: "Movement pattern correction exercises"
+
+3. **Phase-Appropriate Guidance** (${timeline ? timeline.phase : 'Current stage'}):
+   ${timeline && timeline.phase === 'Early Proliferation' ? '- Focus: ROM restoration (target 80% of opposite side), neuromuscular control, early weight-bearing\n   - Avoid: High-impact, pivoting, deep flexion >90°' : '- Provide recommendations appropriate to injury timeline'}
+
+4. **Progression Criteria** (Objective measures):
+   - Example: "Progress when ROM reaches 0-120° and gait is symmetric with no antalgic pattern"
+   - Define specific benchmarks, not vague timelines
+
+Movement Data: ${JSON.stringify(movementData)}
+
+        Provide your response as readable prose with markdown headers (## for sections).
+        Write naturally as a biomechanics specialist explaining your movement analysis and recommendations.
+        Cover key areas like postural assessment, movement patterns, gait analysis, kinetic chain, and compensatory patterns.
+        Use bullet points for exercise lists, but write in clear, clinical narrative format.
       `;
       
-      const analysis = await this.processMessage(analysisPrompt);
-      
+      const analysis = await this.processMessage(analysisPrompt, context);
+      const responseTime = Date.now() - startTime;
+
+      // Parse movement patterns using body-part-specific context
+      const dysfunctionPatterns = this.extractDysfunctionPatterns(analysis, bodyPart, relevantPatterns);
+      const compensatoryPatterns = this.extractCompensatoryPatterns(analysis);
+      const riskLevel = this.assessMovementRisk(analysis);
+
+      // Body part was already extracted above (before prompt) - no need to extract again
+
+      // Build structured response per Task 1.2
       const movementAssessment = {
-        assessmentId: `movement_${Date.now()}`,
-        agent: this.name,
-        agentId: this.agentId,
-        movementData,
-        analysis,
-        dysfunctionPatterns: this.extractDysfunctionPatterns(analysis),
-        compensatoryPatterns: this.extractCompensatoryPatterns(analysis),
-        riskLevel: this.assessMovementRisk(analysis),
+        // Standard fields
+        specialist: this.name,
+        specialistType: 'movementDetective',
+
+        // Structured assessment
+        assessment: {
+          primaryFindings: [
+            bodyPart ? `${bodyPart} Movement Analysis:` : 'Movement Analysis:',
+            `Movement dysfunction detected: ${dysfunctionPatterns.length > 0 ? dysfunctionPatterns[0] : 'Assessment in progress'}`,
+            `Compensatory patterns: ${compensatoryPatterns.length > 0 ? compensatoryPatterns[0] : 'None identified'}`,
+            `Movement risk level: ${riskLevel}`,
+            bodyPart ? `Focus area: ${bodyPart}` : (movementData.affectedArea ? `Affected area: ${movementData.affectedArea}` : 'General assessment')
+          ],
+          confidence: this.getConfidence('movement_analysis'),
+          dataQuality: movementData.description ? 0.8 : 0.4,
+          clinicalImportance: riskLevel === 'high' ? 'high' : riskLevel === 'moderate' ? 'medium' : 'low'
+        },
+
+        // Raw LLM response for reference
+        rawResponse: analysis,
+
+        // Recommendations come from LLM rawResponse, not hardcoded
+        recommendations: [],
+
+        // Key findings with metadata
+        keyFindings: [
+          {
+            finding: dysfunctionPatterns.length > 0 ? dysfunctionPatterns[0] : 'Movement assessment complete',
+            confidence: 0.8,
+            clinicalRelevance: riskLevel === 'high' ? 'high' : 'medium',
+            requiresMDReview: riskLevel === 'high'
+          }
+        ],
+
+        // Inter-agent questions
+        questionsForAgents: [
+          {
+            targetAgent: 'painWhisperer',
+            question: 'Is pain limiting movement patterns or is movement dysfunction causing pain?',
+            priority: 'high'
+          },
+          {
+            targetAgent: 'strengthSage',
+            question: 'What strength deficits contribute to movement dysfunction?',
+            priority: 'high'
+          }
+        ],
+
+        // Follow-up questions for patient
+        followUpQuestions: [
+          'When do you notice the movement difficulty most?',
+          'Have you had previous injuries to this area?',
+          'What movements are most challenging for you?'
+        ],
+
+        // Agreement with triage assessment
+        agreementWithTriage: dysfunctionPatterns.length > 0 ? 'full' : 'partial',
+
+        // Standard metadata
         confidence: this.getConfidence('movement_analysis'),
-        timestamp: new Date().toISOString()
+        responseTime: responseTime,
+        timestamp: new Date().toISOString(),
+        status: 'success',
+
+        // Movement-specific additional data
+        assessmentId: `movement_${Date.now()}`,
+        dysfunctionPatterns: dysfunctionPatterns,
+        compensatoryPatterns: compensatoryPatterns,
+        riskLevel: riskLevel
       };
-      
+
+      // Generate user-friendly markdown response
+      movementAssessment.response = this.formatUserFriendlyResponse(movementAssessment);
+
       // Store assessment
       this.biomechanicalAssessments.push(movementAssessment);
       this.movementPatterns.set(movementAssessment.assessmentId, movementAssessment);
-      
+
       // Track compensatory patterns
       if (movementAssessment.compensatoryPatterns) {
-        movementAssessment.compensatoryPatterns.forEach(pattern => 
+        movementAssessment.compensatoryPatterns.forEach(pattern =>
           this.compensatoryPatterns.add(pattern)
         );
       }
-      
+
       this.updateExperience();
-      
+
       return movementAssessment;
     } catch (error) {
       logger.error(`Error in movement pattern analysis: ${error.message}`);
@@ -496,26 +579,148 @@ export class MovementDetectiveAgent extends OrthopedicSpecialist {
     }
   }
 
-  extractDysfunctionPatterns(analysis) {
-    const patterns = [];
-    const keywords = {
-      'anterior_head_posture': ['forward head', 'anterior head'],
-      'rounded_shoulders': ['rounded shoulders', 'protracted shoulders'],
-      'excessive_lordosis': ['excessive lordosis', 'anterior pelvic tilt'],
-      'knee_valgus': ['knee valgus', 'knock knees'],
-      'foot_pronation': ['excessive pronation', 'flat feet'],
-      'hip_drop': ['hip drop', 'trendelenburg'],
-      'asymmetric_loading': ['asymmetric', 'unilateral']
-    };
-    
+  extractBodyPart(movementData, analysis) {
+    // First check if body part is explicitly provided
+    if (movementData.bodyPart) return movementData.bodyPart;
+    if (movementData.affectedArea) return movementData.affectedArea;
+    if (movementData.location) return movementData.location;
+
+    // Try to extract from raw query if available
+    if (movementData.rawQuery) {
+      const bodyParts = {
+        'hip': ['hip', 'hips', 'hip joint', 'pelvis'],
+        'knee': ['knee', 'knees', 'patella'],
+        'shoulder': ['shoulder', 'shoulders', 'rotator cuff'],
+        'back': ['back', 'spine', 'lumbar', 'thoracic', 'cervical'],
+        'ankle': ['ankle', 'ankles', 'achilles'],
+        'foot': ['foot', 'feet', 'plantar', 'heel'],
+        'elbow': ['elbow', 'elbows'],
+        'wrist': ['wrist', 'wrists', 'carpal'],
+        'neck': ['neck', 'cervical spine']
+      };
+
+      const lowerQuery = movementData.rawQuery.toLowerCase();
+      for (const [part, terms] of Object.entries(bodyParts)) {
+        if (terms.some(term => lowerQuery.includes(term))) {
+          return part.charAt(0).toUpperCase() + part.slice(1);
+        }
+      }
+    }
+
+    // Try to extract from analysis response
     const lowerAnalysis = analysis.toLowerCase();
-    
-    Object.entries(keywords).forEach(([pattern, terms]) => {
+    if (lowerAnalysis.includes('hip')) return 'Hip';
+    if (lowerAnalysis.includes('knee')) return 'Knee';
+    if (lowerAnalysis.includes('shoulder')) return 'Shoulder';
+    if (lowerAnalysis.includes('back') || lowerAnalysis.includes('spine')) return 'Back';
+    if (lowerAnalysis.includes('ankle')) return 'Ankle';
+    if (lowerAnalysis.includes('foot')) return 'Foot';
+    if (lowerAnalysis.includes('elbow')) return 'Elbow';
+    if (lowerAnalysis.includes('wrist')) return 'Wrist';
+    if (lowerAnalysis.includes('neck')) return 'Neck';
+
+    return null;
+  }
+
+  extractDysfunctionPatterns(analysis, bodyPart = null, relevantPatterns = {}) {
+    const patterns = [];
+    const lowerAnalysis = analysis.toLowerCase();
+
+    // If we have body-part-specific patterns from the extractor, use those exclusively
+    if (bodyPart && Object.keys(relevantPatterns).length > 0) {
+      Object.entries(relevantPatterns).forEach(([pattern, terms]) => {
+        if (terms.some(term => lowerAnalysis.includes(term.toLowerCase()))) {
+          patterns.push(pattern);
+        }
+      });
+
+      // If no specific patterns found but we know the body part, add a generic pattern
+      if (patterns.length === 0) {
+        patterns.push(`${bodyPart.toLowerCase()}_dysfunction_detected`);
+      }
+
+      return patterns;
+    }
+
+    // Fallback: Legacy pattern extraction (if no body part was extracted)
+    const mentionsHip = lowerAnalysis.includes('hip');
+    const mentionsKnee = lowerAnalysis.includes('knee');
+    const mentionsShoulder = lowerAnalysis.includes('shoulder');
+    const mentionsBack = lowerAnalysis.includes('back') || lowerAnalysis.includes('spine');
+    const mentionsElbow = lowerAnalysis.includes('elbow');
+
+    // Elbow-related patterns
+    if (mentionsElbow) {
+      const elbowPatterns = {
+        'elbow_instability': ['instability', 'dislocation', 'subluxation'],
+        'UCL_injury': ['UCL', 'ulnar collateral', 'medial elbow'],
+        'lateral_epicondylitis': ['tennis elbow', 'lateral epicondylitis'],
+        'elbow_stiffness': ['stiffness', 'limited range', 'flexion contracture']
+      };
+
+      Object.entries(elbowPatterns).forEach(([pattern, terms]) => {
+        if (terms.some(term => lowerAnalysis.includes(term))) {
+          patterns.push(pattern);
+        }
+      });
+    }
+
+    // Hip-related patterns
+    if (mentionsHip) {
+      const hipPatterns = {
+        'hip_flexor_tightness': ['hip flexor tight', 'tight hip flexor', 'iliopsoas'],
+        'weak_hip_abductors': ['weak hip abductor', 'weak glute', 'weak gluteal'],
+        'FAI_pattern': ['impingement', 'FAI', 'femoroacetabular'],
+        'hip_drop': ['hip drop', 'trendelenburg', 'pelvic drop']
+      };
+
+      Object.entries(hipPatterns).forEach(([pattern, terms]) => {
+        if (terms.some(term => lowerAnalysis.includes(term))) {
+          patterns.push(pattern);
+        }
+      });
+    }
+
+    // Back/Spine patterns
+    if (mentionsBack) {
+      const backPatterns = {
+        'excessive_lordosis': ['excessive lordosis', 'anterior pelvic tilt'],
+        'posterior_pelvic_tilt': ['posterior pelvic tilt', 'flat back']
+      };
+
+      Object.entries(backPatterns).forEach(([pattern, terms]) => {
+        if (terms.some(term => lowerAnalysis.includes(term))) {
+          patterns.push(pattern);
+        }
+      });
+    }
+
+    // Only include head/shoulder patterns if directly relevant
+    if (mentionsShoulder || lowerAnalysis.includes('neck pain')) {
+      const upperPatterns = {
+        'anterior_head_posture': ['forward head', 'anterior head'],
+        'rounded_shoulders': ['rounded shoulders', 'protracted shoulders']
+      };
+
+      Object.entries(upperPatterns).forEach(([pattern, terms]) => {
+        if (terms.some(term => lowerAnalysis.includes(term))) {
+          patterns.push(pattern);
+        }
+      });
+    }
+
+    // General patterns
+    const generalPatterns = {
+      'asymmetric_loading': ['asymmetric', 'unilateral loading'],
+      'compensatory_pattern': ['compensatory', 'compensation']
+    };
+
+    Object.entries(generalPatterns).forEach(([pattern, terms]) => {
       if (terms.some(term => lowerAnalysis.includes(term))) {
         patterns.push(pattern);
       }
     });
-    
+
     return patterns;
   }
 
@@ -591,6 +796,25 @@ export class MovementDetectiveAgent extends OrthopedicSpecialist {
       return progressData.functionalGains.overall || 0;
     }
     return 0;
+  }
+
+  getConfidence(task) {
+    // Override base confidence with movement-specific expertise
+    const movementTasks = ['movement_analysis', 'movement_planning', 'biomechanics', 'gait', 'consultation'];
+    const isMovementTask = movementTasks.some(t => task.toLowerCase().includes(t.toLowerCase()));
+
+    // Base confidence starts higher for movement-related tasks
+    let baseConfidence = isMovementTask ? 0.78 : 0.42;
+
+    // Experience bonus (up to 0.2)
+    const experienceBonus = Math.min(this.experience * 0.005, 0.2);
+
+    // Historical accuracy bonus based on successful assessments
+    const accuracyBonus = this.biomechanicalAssessments.length > 0
+      ? Math.min(this.biomechanicalAssessments.length * 0.01, 0.05)
+      : 0;
+
+    return Math.min(baseConfidence + experienceBonus + accuracyBonus, 0.95);
   }
 
   getMovementStatistics() {

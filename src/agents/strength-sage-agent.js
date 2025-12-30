@@ -1,9 +1,11 @@
 import { OrthopedicSpecialist } from './orthopedic-specialist.js';
 import logger from '../utils/logger.js';
+import { extractBodyPartFromQuery, extractSportActivity, extractTimeline, extractInjuryMechanism } from '../utils/body-part-extractor.js';
 
 export class StrengthSageAgent extends OrthopedicSpecialist {
   constructor(name = 'Strength Sage', accountManager = null) {
-    super(name, 'functional restoration and rehabilitation', accountManager);
+    super(name, 'functional restoration and rehabilitation', accountManager, 'strengthSage');
+    this.agentType = 'strength_sage';
     this.strengthAssessments = new Map();
     this.rehabilitationPrograms = new Map();
     this.functionalTests = [];
@@ -68,98 +70,204 @@ export class StrengthSageAgent extends OrthopedicSpecialist {
     Your mission is to guide patients from injury to full functional restoration and beyond, building resilience and capacity that exceeds pre-injury levels while preventing future dysfunction.`;
   }
 
-  async assessFunctionalCapacity(assessmentData) {
+  async assessFunctionalCapacity(assessmentData, context = {}) {
     try {
+      const startTime = Date.now();
       logger.info(`${this.name} conducting comprehensive functional capacity assessment`);
-      
+
+      // Extract dual-track data if present
+      const { rawQuery, enableDualTrack } = assessmentData;
+
+      // 🎯 PRE-EXTRACT body part and sport BEFORE building prompt
+      const bodyPart = extractBodyPartFromQuery(rawQuery, assessmentData);
+      const sport = extractSportActivity(rawQuery);
+      const timeline = extractTimeline(rawQuery, assessmentData);
+      const mechanism = extractInjuryMechanism(rawQuery, assessmentData);
+      const age = assessmentData.age || 'unknown age';
+
       const assessmentPrompt = `
-        COMPREHENSIVE FUNCTIONAL CAPACITY EVALUATION:
-        
-        Assessment Data: ${JSON.stringify(assessmentData)}
-        
-        Conduct thorough functional assessment including:
-        
-        1. STRENGTH ASSESSMENT:
-           - Manual muscle testing (0-5 scale)
-           - Instrumented strength testing
-           - Isometric, concentric, eccentric capacity
-           - Bilateral strength comparisons
-           - Core stability assessment
-           
-        2. POWER AND EXPLOSIVENESS:
-           - Rate of force development
-           - Power output measurement
-           - Plyometric capacity
-           - Explosive movement assessment
-           - Speed and agility testing
-           
-        3. MUSCULAR ENDURANCE:
-           - Repetitive task capacity
-           - Fatigue resistance
-           - Work-to-rest ratios
-           - Cardiovascular endurance
-           - Local muscular endurance
-           
-        4. FUNCTIONAL MOVEMENT CAPACITY:
-           - Activities of daily living simulation
-           - Work-specific task assessment
-           - Sport-specific movement evaluation
-           - Lifting, carrying, pushing, pulling
-           - Positional tolerance testing
-           
-        5. BALANCE AND PROPRIOCEPTION:
-           - Static balance assessment
-           - Dynamic balance challenges
-           - Proprioceptive accuracy
-           - Reactive balance responses
-           - Sensorimotor integration
-           
-        6. FLEXIBILITY AND MOBILITY:
-           - Range of motion assessment
-           - Joint mobility testing
-           - Soft tissue extensibility
-           - Functional flexibility
-           - Movement quality evaluation
-           
-        7. PSYCHOSOCIAL FACTORS:
-           - Fear of movement assessment
-           - Confidence levels
-           - Motivation and readiness
-           - Goal expectations
-           - Support system evaluation
-           
-        8. BASELINE CAPACITY METRICS:
-           - Current functional level (%)
-           - Deficit identification
-           - Strength imbalances
-           - Capacity limitations
-           - Recovery potential assessment
-           
-        Provide comprehensive functional profile with specific deficits and restoration targets.
+You are an expert in neuromuscular rehabilitation and functional restoration.
+
+🎯 PATIENT'S QUESTION: "${rawQuery || 'Functional assessment requested'}"
+
+📋 FUNCTIONAL CONTEXT:
+- Body Part: ${bodyPart || 'Unspecified'}
+- Timeline: ${timeline ? `${timeline.value} ${timeline.unit}s ago (${timeline.phase} phase, Day ${timeline.totalDays})` : 'Unknown'}
+- Mechanism: ${mechanism || 'Unknown'}
+- Age: ${age}
+- Sport: ${sport || 'Not specified'}
+
+🧠 THINK LIKE A STRENGTH SPECIALIST:
+${bodyPart === 'Knee' && timeline && timeline.phase === 'Early Proliferation' ? `
+- What arthrogenic muscle inhibition (AMI) is present? (VMO shutdown from effusion)
+- What neuromuscular control is compromised?
+- How do we progressively reload tissues at Week ${Math.floor(timeline.totalDays / 7)}?
+- What functional benchmarks define readiness for next phase?
+` : timeline ? `
+- What muscle inhibition/atrophy has occurred at ${timeline.phase}?
+- What neuromuscular patterns need restoration?
+- What functional benchmarks define current recovery stage?
+- How do we safely progress loading at this phase?
+` : `
+- What muscle inhibition/atrophy is present?
+- What neuromuscular control deficits exist?
+- What functional benchmarks are needed?
+- How do we safely progress loading?
+`}
+
+⚠️ PROVIDE EXPERT-LEVEL STRENGTHENING PROTOCOL:
+
+1. **Neuromuscular Reasoning**:
+   ${bodyPart === 'Knee' && timeline && timeline.phase === 'Early Proliferation' ?
+   `Example: "Joint effusion at ${timeline.phase} causes arthrogenic muscle inhibition (AMI), particularly affecting the vastus medialis oblique (VMO). This quadriceps shutdown limits functional capacity to ~70% and increases re-injury risk. Neural drive must be restored before progressive loading."` :
+   `Explain neuromuscular inhibition: What muscles are inhibited? What's the mechanism? What's the functional impact? NOT generic "progressive strength training"`}
+
+2. **Specific Strengthening Protocol** (${timeline ? timeline.phase : 'Current phase'}):
+   ${bodyPart === 'Knee' && timeline && timeline.phase === 'Early Proliferation' ? `
+   Daily Exercises:
+   - Quad sets: 100 reps/day (sets of 10), 5-second holds
+     Rationale: Restore neural drive to inhibited VMO
+     Progression: Add ankle weight (2-5 lbs) when pain-free
+
+   - Straight leg raises: 3 sets of 15, twice daily
+     Form: Quad locked, lift to 45°, control descent
+     Progression: Add weight when easy (start 2 lbs)
+
+   - Terminal knee extension with band: 3 sets of 15 daily
+     Focus: Final 30° of extension for VMO activation
+     Progression: Increase band resistance weekly
+   ` : `
+   Provide EXACT exercises with:
+   - Sets, reps, frequency (e.g., "3 sets of 15, twice daily")
+   - Form cues and rationale
+   - Progression criteria (when and how to advance)
+   - NOT: "Progressive strength training program"
+   `}
+
+3. **Load Progression Strategy**:
+   - Increase load 10% per week IF swelling stable
+   - Monitor morning vs evening swelling differential
+   - Reduce 50% if next-day swelling increases >5mm
+   - Objective measures guide progression, not time alone
+
+4. **Functional Milestones** (Objective):
+   ${bodyPart === 'Knee' ? `
+   - Advance when quad strength >80% of opposite leg (manual or handheld dynamometry)
+   - Single-leg squat without valgus collapse
+   - Gait symmetric, no antalgic pattern
+   ${sport === 'Football' ? `\n   Football-Specific:\n   - Progress to agility when strength >90% opposite leg\n   - Return to contact when passing all tests + sport-specific drills pain-free` : ''}
+   ` : `
+   - Define specific, measurable functional benchmarks
+   - Compare to opposite side or normative data
+   - Include activity-specific criteria
+   `}
+
+Assessment Data: ${JSON.stringify(assessmentData)}
+
+        ${enableDualTrack && rawQuery ? `
+🎯 REMEMBER: Your PRIMARY task is answering: "${rawQuery}"
+${sport ? `🏈 INCLUDE: ${sport}-specific return-to-play criteria and readiness` : ''}
+        ` : ''}
+
+        Provide your response as readable prose with markdown headers (## for sections).
+        Write naturally as a strength and rehabilitation specialist explaining your analysis and recommendations.
+        Use bullet points for exercise lists, but write in clear, clinical narrative format.
       `;
       
-      const assessment = await this.processMessage(assessmentPrompt);
-      
+      const assessment = await this.processMessage(assessmentPrompt, context);
+      const responseTime = Date.now() - startTime;
+
+      // Parse functional metrics
+      const functionalLevel = this.extractFunctionalLevel(assessment);
+      const strengthDeficits = this.extractStrengthDeficits(assessment);
+      const restorationPotential = this.assessRestorePotential(assessment);
+
+      // Build structured response per Task 1.2
       const functionalAssessment = {
-        assessmentId: `functional_${Date.now()}`,
-        agent: this.name,
-        agentId: this.agentId,
-        assessmentData,
-        evaluation: assessment,
-        functionalLevel: this.extractFunctionalLevel(assessment),
-        strengthDeficits: this.extractStrengthDeficits(assessment),
-        priorityAreas: this.extractPriorityAreas(assessment),
-        restorePotential: this.assessRestorePotential(assessment),
+        // Standard fields
+        specialist: this.name,
+        specialistType: 'strengthSage',
+
+        // Structured assessment
+        assessment: {
+          primaryFindings: [
+            `Functional capacity: ${functionalLevel}%`,
+            `Strength deficits identified: ${strengthDeficits.length > 0 ? strengthDeficits[0] : 'None'}`,
+            `Restoration potential: ${restorationPotential}`,
+            assessmentData.limitations ? `Primary limitations: ${assessmentData.limitations.join(', ')}` : 'Limitations unspecified'
+          ],
+          confidence: this.getConfidence('functional_assessment'),
+          dataQuality: assessmentData.limitations ? 0.8 : 0.5,
+          clinicalImportance: functionalLevel < 50 ? 'high' : functionalLevel < 75 ? 'medium' : 'low'
+        },
+
+        // Raw LLM response for reference
+        rawResponse: assessment,
+
+        // Recommendations come from LLM rawResponse, not hardcoded
+        recommendations: [],
+
+        // Key findings with metadata
+        keyFindings: [
+          {
+            finding: `Functional capacity at ${functionalLevel}% with ${strengthDeficits.length} strength deficits`,
+            confidence: 0.85,
+            clinicalRelevance: functionalLevel < 75 ? 'high' : 'medium',
+            requiresMDReview: functionalLevel < 40
+          }
+        ],
+
+        // Inter-agent questions
+        questionsForAgents: [
+          {
+            targetAgent: 'movementDetective',
+            question: 'What movement patterns should be prioritized in strength training?',
+            priority: 'high'
+          },
+          {
+            targetAgent: 'painWhisperer',
+            question: 'Are there pain limitations that will affect exercise progression?',
+            priority: 'high'
+          },
+          {
+            targetAgent: 'mindMender',
+            question: 'Is fear of re-injury limiting effort or adherence to strengthening?',
+            priority: 'medium'
+          }
+        ],
+
+        // Follow-up questions for patient
+        followUpQuestions: [
+          'What specific activities do you want to return to?',
+          'Are you experiencing any pain during strengthening exercises?',
+          'What are your functional goals for recovery?'
+        ],
+
+        // Agreement with triage assessment
+        agreementWithTriage: 'full',
+
+        // Standard metadata
         confidence: this.getConfidence('functional_assessment'),
-        timestamp: new Date().toISOString()
+        responseTime: responseTime,
+        timestamp: new Date().toISOString(),
+        status: 'success',
+
+        // Strength-specific additional data
+        assessmentId: `functional_${Date.now()}`,
+        functionalLevel: functionalLevel,
+        strengthDeficits: strengthDeficits,
+        restorationPotential: restorationPotential
       };
-      
+
+      // Generate user-friendly markdown response
+      functionalAssessment.response = this.formatUserFriendlyResponse(functionalAssessment);
+
       // Store assessment
       this.strengthAssessments.set(functionalAssessment.assessmentId, functionalAssessment);
       this.functionalTests.push(functionalAssessment);
-      
+
       this.updateExperience();
-      
+
       return functionalAssessment;
     } catch (error) {
       logger.error(`Error in functional capacity assessment: ${error.message}`);
@@ -646,13 +754,32 @@ export class StrengthSageAgent extends OrthopedicSpecialist {
 
   calculateReadinessScore(progressData) {
     let score = 0;
-    
+
     if (progressData.strengthGains >= 80) score += 25;
     if (progressData.functionalCapacity >= 85) score += 25;
     if (progressData.movementQuality >= 90) score += 25;
     if (progressData.confidence >= 8) score += 25;
-    
+
     return score;
+  }
+
+  getConfidence(task) {
+    // Override base confidence with strength/functional-specific expertise
+    const strengthTasks = ['functional_assessment', 'rehabilitation', 'strength', 'return_protocol', 'consultation'];
+    const isStrengthTask = strengthTasks.some(t => task.toLowerCase().includes(t.toLowerCase()));
+
+    // Base confidence starts higher for strength-related tasks
+    let baseConfidence = isStrengthTask ? 0.80 : 0.40;
+
+    // Experience bonus (up to 0.2)
+    const experienceBonus = Math.min(this.experience * 0.005, 0.2);
+
+    // Historical accuracy bonus based on successful programs
+    const accuracyBonus = this.functionalTests.length > 0
+      ? Math.min(this.functionalTests.length * 0.01, 0.05)
+      : 0;
+
+    return Math.min(baseConfidence + experienceBonus + accuracyBonus, 0.95);
   }
 
   getFunctionalStatistics() {
