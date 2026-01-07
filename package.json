@@ -8,9 +8,13 @@
     "start": "node src/index.js",
     "dev": "node --watch src/index.js",
     "test": "jest",
-    "build": "tsc",
     "lint": "eslint src/",
-    "example": "node examples/basic-agent.js"
+    "example": "node examples/basic-agent.js",
+    "compile:contract": "hardhat compile",
+    "deploy:contract": "hardhat run scripts/deploy.js --network base-sepolia",
+    "authorize:agents": "hardhat run scripts/authorize-agents.js --network base-sepolia",
+    "check:balances": "hardhat run scripts/check-balances.js --network base-sepolia",
+    "verify:contract": "hardhat verify --network base-sepolia"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.29.0",
@@ -36,8 +40,11 @@
     "ws": "^8.18.3"
   },
   "devDependencies": {
+    "@nomicfoundation/hardhat-toolbox": "^5.0.0",
+    "@openzeppelin/contracts": "^5.0.0",
     "@types/node": "^22.10.1",
     "eslint": "^9.15.0",
+    "hardhat": "^2.22.0",
     "jest": "^29.7.0",
     "nodemon": "^3.1.7",
     "typescript": "^5.7.2"
