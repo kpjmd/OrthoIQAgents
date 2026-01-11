@@ -1,7 +1,23 @@
 import { ethers } from 'ethers';
 import { CdpEvmWalletProvider } from '@coinbase/agentkit';
+import { readFileSync } from 'fs';
+import { fileURLToPath } from 'url';
+import { dirname, join } from 'path';
 import logger from './logger.js';
 import { agentConfig } from '../config/agent-config.js';
+
+// Load compiled contract artifacts
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+const contractPath = join(__dirname, '../../artifacts/contracts/OrthoIQAgentToken.sol/OrthoIQAgentToken.json');
+
+let compiledToken = null;
+try {
+  compiledToken = JSON.parse(readFileSync(contractPath, 'utf8'));
+  logger.info('Loaded compiled OrthoIQAgentToken contract');
+} catch (error) {
+  logger.warn('Compiled contract not found - run "npm run compile:contract" first');
+}
 
 export class BlockchainUtils {
   constructor() {
@@ -255,13 +271,14 @@ export class BlockchainUtils {
         "event Approval(address indexed owner, address indexed spender, uint256 value)"
       ];
       
-      // Basic ERC20 bytecode - in production this would be a real token contract
-      const tokenBytecode = "0x608060405234801561001057600080fd5b506040516111b93803806111b98339818101604052810190610032919061028d565b8260039081610041919061052f565b50816004908161005191906105..."; // Placeholder for now
-      
+      // Use compiled contract bytecode if available
+      const tokenBytecode = compiledToken ? compiledToken.bytecode : "0x608060405234801561001057600080fd5b506040516111b93803806111b98339818101604052810190610032919061028d565b8260039081610041919061052f565b50816004908161005191906105..."; // Fallback placeholder
+      const finalAbi = compiledToken ? compiledToken.abi : tokenAbi;
+
       // Deploy token contract
       const deployment = await this.deployContract(
         deployerWalletProvider,
-        tokenAbi,
+        finalAbi,
         tokenBytecode,
         ["OrthoIQ Agent Token", "OAT", ethers.parseEther("1000000")] // 1M tokens
       );
@@ -281,10 +298,40 @@ export class BlockchainUtils {
   }
 
   createMockTokenContract() {
+    // Check if we have a deployed contract address from environment
+    const deployedAddress = agentConfig.tokenEconomics.contractAddress;
+
+    if (deployedAddress && deployedAddress !== '' && !agentConfig.blockchain.mockResponses) {
+      logger.info(`Using deployed token contract: ${deployedAddress}`);
+
+      // Register the deployed contract if we have the ABI
+      if (compiledToken && this.provider) {
+        try {
+          const contract = new ethers.Contract(deployedAddress, compiledToken.abi, this.provider);
+          this.contracts.set(deployedAddress, {
+            contract,
+            abi: compiledToken.abi,
+            name: "OrthoIQ Agent Token"
+          });
+        } catch (error) {
+          logger.error(`Failed to register deployed contract: ${error.message}`);
+        }
+      }
+
+      return {
+        tokenAddress: deployedAddress,
+        name: "OrthoIQ Agent Token",
+        symbol: "OAT",
+        totalSupply: "1000000",
+        deploymentTx: null,
+        isMock: false
+      };
+    }
+
+    // Return mock contract for development/testing
     const mockAddress = `0x${Math.random().toString(16).substring(2, 42).padStart(40, '0')}`;
-    
     logger.info(`Created mock token contract at: ${mockAddress}`);
-    
+
     return {
       tokenAddress: mockAddress,
       name: "OrthoIQ Agent Token (Mock)",
@@ -298,26 +345,36 @@ export class BlockchainUtils {
   async mintTokensToAgent(tokenAddress, agentAddress, amount, walletProvider) {
     try {
       logger.info(`Minting ${amount} tokens to agent: ${agentAddress}`);
-      
-      if (!walletProvider) {
-        logger.warn('No wallet provider available, returning mock mint result');
+
+      // Check if we should use mock responses
+      if (agentConfig.blockchain.mockResponses) {
+        logger.debug('Mock blockchain mode enabled, returning simulated mint');
         return this.createMockMintResult(tokenAddress, agentAddress, amount);
       }
-      
-      // Get the token contract
-      const contractInfo = this.contracts.get(tokenAddress);
-      if (!contractInfo) {
-        throw new Error(`Token contract not found: ${tokenAddress}`);
+
+      if (!walletProvider) {
+        logger.warn('No wallet provider available for real minting, falling back to mock');
+        return this.createMockMintResult(tokenAddress, agentAddress, amount);
       }
-      
+
+      if (!compiledToken) {
+        logger.warn('Compiled contract ABI not available, falling back to mock');
+        return this.createMockMintResult(tokenAddress, agentAddress, amount);
+      }
+
       // Get signer from wallet provider
       const signer = await walletProvider.getSigner();
-      const contract = contractInfo.contract.connect(signer);
-      
-      // Call mint function
-      const tx = await contract.mint(agentAddress, ethers.parseEther(amount.toString()));
+      const contract = new ethers.Contract(tokenAddress, compiledToken.abi, signer);
+
+      // Call mint function with reason parameter
+      const amountWei = ethers.parseEther(amount.toString());
+      const reason = `Agent reward: ${Date.now()}`;
+      const tx = await contract.mint(agentAddress, amountWei, reason);
+
+      logger.info(`Mint transaction submitted: ${tx.hash}`);
       const receipt = await tx.wait();
-      
+      logger.info(`Mint confirmed in block ${receipt.blockNumber}`);
+
       const mintResult = {
         contractAddress: tokenAddress,
         functionName: 'mint',
@@ -326,16 +383,17 @@ export class BlockchainUtils {
         blockNumber: receipt.blockNumber,
         gasUsed: receipt.gasUsed.toString(),
         status: receipt.status === 1 ? 'success' : 'failed',
-        timestamp: new Date().toISOString()
+        timestamp: new Date().toISOString(),
+        isMock: false
       };
-      
+
       this.transactionHistory.push(mintResult);
-      
+
       return mintResult;
     } catch (error) {
       logger.error(`Token minting failed: ${error.message}`);
-      
-      // Return mock mint for development
+
+      // Return mock mint as fallback
       return this.createMockMintResult(tokenAddress, agentAddress, amount);
     }
   }
@@ -381,23 +439,35 @@ export class BlockchainUtils {
 
   async getTokenBalance(tokenAddress, agentAddress) {
     try {
-      const balanceResult = await this.interactWithContract(
-        tokenAddress,
-        'balanceOf',
-        [agentAddress]
-      );
-      
-      const balance = ethers.formatEther(balanceResult.result);
-      
+      // Check if we should use mock responses
+      if (agentConfig.blockchain.mockResponses) {
+        return {
+          address: agentAddress,
+          balance: "0.0",
+          tokenAddress: tokenAddress,
+          timestamp: new Date().toISOString(),
+          isMock: true
+        };
+      }
+
+      if (!compiledToken || !this.provider) {
+        throw new Error('Contract ABI or provider not available');
+      }
+
+      const contract = new ethers.Contract(tokenAddress, compiledToken.abi, this.provider);
+      const balanceWei = await contract.balanceOf(agentAddress);
+      const balance = ethers.formatEther(balanceWei);
+
       return {
         address: agentAddress,
         balance: balance,
         tokenAddress: tokenAddress,
-        timestamp: new Date().toISOString()
+        timestamp: new Date().toISOString(),
+        isMock: false
       };
     } catch (error) {
       logger.error(`Failed to get token balance: ${error.message}`);
-      
+
       // Return mock balance for development
       return {
         address: agentAddress,

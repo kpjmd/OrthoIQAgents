@@ -16,6 +16,7 @@ import BlockchainUtils from './utils/blockchain-utils.js';
 import CdpAccountManager from './utils/cdp-account-manager.js';
 import cacheManager from './utils/cache-manager.js';
 import promptManager from './utils/prompt-manager.js';
+import { validateScope } from './utils/scope-validator.js';
 
 // Import all specialist agents
 import { TriageAgent } from './agents/triage-agent.js';
@@ -334,6 +335,10 @@ class OrthoIQAgentSystem {
     // Triage endpoint
     this.app.post('/triage', async (req, res) => {
       try {
+        // Scope validation - early return if out of scope
+        const scopeCheck = this.validateQueryScope(req, res);
+        if (scopeCheck) return;
+
         const caseData = req.body;
         const triageResult = await this.agents.triage.triageCase(caseData);
         
@@ -359,6 +364,10 @@ class OrthoIQAgentSystem {
     // Multi-specialist consultation endpoint with caching and modes
     this.app.post('/consultation', async (req, res) => {
       try {
+        // Scope validation - early return if out of scope
+        const scopeCheck = this.validateQueryScope(req, res);
+        if (scopeCheck) return;
+
         const {
           caseData,
           requiredSpecialists,
@@ -694,9 +703,13 @@ class OrthoIQAgentSystem {
     // Agent-specific endpoints
     this.app.post('/agents/:agentType/assess', async (req, res) => {
       try {
+        // Scope validation - early return if out of scope
+        const scopeCheck = this.validateQueryScope(req, res);
+        if (scopeCheck) return;
+
         const { agentType } = req.params;
         const assessmentData = req.body;
-        
+
         const agent = this.agents[agentType];
         if (!agent) {
           return res.status(404).json({ error: 'Agent not found' });
@@ -1269,6 +1282,53 @@ class OrthoIQAgentSystem {
         message: process.env.NODE_ENV === 'development' ? error.message : 'Something went wrong'
       });
     });
+  }
+
+  /**
+   * Validate query scope before processing
+   * Returns response object if out of scope, null if should continue
+   */
+  validateQueryScope(req, res) {
+    const caseData = req.body.caseData || req.body;
+    const query = caseData.rawQuery || caseData.primaryComplaint || caseData.symptoms || '';
+
+    logger.info({
+      event: 'scope_validation_start',
+      hasCaseData: !!req.body.caseData,
+      extractedQuery: query?.substring(0, 100),
+      validationEnabled: process.env.ENABLE_SCOPE_VALIDATION
+    });
+
+    const validation = validateScope(query, caseData);
+
+    logger.info({
+      event: 'scope_validation_result',
+      passToAgent: validation.passToAgent,
+      category: validation.category,
+      detectedCategory: validation.detectedCategory,
+      matchedTerms: validation.matchedTerms,
+      confidence: validation.confidence
+    });
+
+    if (!validation.passToAgent) {
+      logger.info({
+        event: 'scope_validation_rejected',
+        reason: validation.detectedCategory,
+        redirecting: true
+      });
+      return res.status(200).json({
+        success: false,
+        scopeValidation: {
+          category: 'out_of_scope',
+          message: validation.redirectMessage,
+          detectedCondition: validation.detectedCategory,
+          confidence: validation.confidence
+        },
+        recommendation: 'CONSULT_APPROPRIATE_PROVIDER',
+        timestamp: new Date().toISOString()
+      });
+    }
+    return null; // Continue normal processing
   }
 
   async start() {
