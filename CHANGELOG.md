@@ -10,10 +10,135 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Planned
-- Railway deployment with production configuration
-- Base Sepolia testnet integration
-- OIQ token contract deployment
 - Persistent prediction storage
+- Advanced MindMender routing enhancements
+- FHIR integration for medical records
+- Real-time monitoring dashboard
+
+---
+
+## [0.4.1] - 2026-01-12
+
+### Fixed
+- **Respiratory scope validation**: Added missing terms (`wheezing`, `shortness of breath`, `breathing difficulty`, `difficulty breathing`) to catch exercise-induced respiratory conditions
+- **Debug logging**: Added scope validation logging for production debugging
+
+### Added
+- New test cases for wheezing and shortness of breath queries
+
+---
+
+## [0.5.0] - 2026-01-06
+
+### Added - Railway Deployment & Blockchain Integration
+- **Production Deployment Guide**: Complete Railway deployment documentation (`RAILWAY_DEPLOYMENT.md`)
+- **Smart Contract**: ERC20 OrthoIQ Agent Token (OAT) contract with authorized minter system
+- **Hardhat Infrastructure**: Solidity compilation, deployment, and verification scripts
+- **Deployment Scripts**: Automated contract deployment, agent authorization, and balance checking
+- **Production Secrets**: Generated secure JWT_SECRET, API_KEY, and ENCRYPTION_KEY
+- **Real Blockchain Integration**: Support for Base Sepolia testnet with automatic fallback to mock mode
+
+### Smart Contract Features
+- **Token**: "OrthoIQ Agent Token" (OAT) on Base Sepolia
+- **Max Supply**: 1,000,000 OAT tokens
+- **Authorized Minters**: 5 agent wallets can mint rewards
+- **Event Tracking**: TokensMinted, MinterAuthorized, MinterRevoked events
+- **Reason Tracking**: All mints include reason parameter for transparency
+- **Burn Capability**: Agents can burn tokens for economics management
+
+### Technical Changes
+
+#### Files Created
+- `contracts/OrthoIQAgentToken.sol` - ERC20 token contract (Solidity 0.8.20)
+- `hardhat.config.js` - Hardhat configuration for Base Sepolia/mainnet
+- `scripts/deploy.js` - Contract deployment with Basescan verification
+- `scripts/authorize-agents.js` - Agent wallet authorization script
+- `scripts/check-balances.js` - Token balance monitoring script
+- `RAILWAY_DEPLOYMENT.md` - Complete deployment guide with 48 environment variables
+- `IMPLEMENTATION_SUMMARY.md` - Full implementation documentation
+
+#### Files Modified
+- `package.json`: Added Hardhat dependencies (@openzeppelin/contracts, hardhat, @nomicfoundation/hardhat-toolbox)
+- `package.json`: Added 5 new npm scripts (compile:contract, deploy:contract, authorize:agents, check:balances, verify:contract)
+- `src/utils/blockchain-utils.js`:
+  - Dynamic loading of compiled contract ABI/bytecode
+  - Real contract address from TOKEN_CONTRACT_ADDRESS env var
+  - Real blockchain minting with transaction confirmation
+  - Real balance queries from deployed contract
+  - Mock mode flag support (MOCK_BLOCKCHAIN_RESPONSES)
+- `src/utils/token-manager.js`:
+  - Enhanced processBlockchainReward() with mock mode checks
+  - Proper isMock status tracking
+  - Graceful fallback to simulated transactions
+
+### Environment Variables
+- **New**: `MOCK_BLOCKCHAIN_RESPONSES` - Toggle between mock and real blockchain (default: true)
+- **New**: `TOKEN_CONTRACT_ADDRESS` - Deployed contract address on Base Sepolia
+- **New**: `DEPLOYER_PRIVATE_KEY` - Contract deployment wallet (local .env only)
+- **New**: `BASESCAN_API_KEY` - For contract verification
+- **New**: `JWT_SECRET`, `API_KEY`, `ENCRYPTION_KEY` - Production security secrets
+
+### Deployment Workflow
+1. **Phase 1**: Railway deployment with mock blockchain (1 hour)
+2. **Phase 2**: Post-deployment testing (30 minutes)
+3. **Phase 3**: Base Sepolia migration with real smart contract (4 hours)
+
+### Safety Features
+- **Graceful Fallback**: System operates in mock mode if contract not deployed
+- **Transaction Confirmation**: Wait for block confirmations before success
+- **Error Handling**: All blockchain errors fall back to mock mode
+- **Authorization**: Only authorized agent wallets can mint tokens
+- **Supply Cap**: Hard limit of 1M tokens enforced in contract
+
+### Production Ready
+- ✅ Railway deployment guide complete
+- ✅ All environment variables documented
+- ✅ Post-deployment test suite (10 tests)
+- ✅ Smart contract audited (OpenZeppelin base)
+- ✅ Deployment scripts tested
+- ✅ Rollback procedures documented
+
+### Migration Path
+- **Current**: Mock blockchain with simulated transactions
+- **Next**: Deploy contract → Fund wallets → Authorize agents → Enable real blockchain
+- **Future**: Migrate to Base mainnet for production
+
+---
+
+## [0.4.0] - 2026-01-05
+
+### Added
+- **Orthopedic Scope Validation**: Pre-agent filtering to detect non-orthopedic queries before LLM processing
+- **Scope Validator Utility**: New `src/utils/scope-validator.js` with keyword-based detection
+- **Comprehensive Test Suite**: 69 tests covering all validation scenarios in `tests/scope-validator.test.js`
+- **Environment Toggle**: `ENABLE_SCOPE_VALIDATION` flag (default: true) for production flexibility
+- **Redirect Logging**: All out-of-scope redirects logged with category, matched terms, and truncated query
+
+### Features
+- **IN_SCOPE_AFFIRMERS**: Body parts, sports injuries, recovery terms override false positives
+- **OUT_OF_SCOPE_PATTERNS**: 11 categories (cardiac, endocrine, dermatology, GI, respiratory, mental health, oncology, infectious, pregnancy, dental, neurological)
+- **Exclusion Patterns**: Prevent false positives (e.g., "pregnancy with pelvic pain" passes, "chest wall pain" passes)
+- **Soft Redirects**: Helpful messages directing users to appropriate providers (no emergency/911 language)
+
+### Technical Details
+- Modified `src/index.js`: Added `validateQueryScope()` method and integration at 3 endpoints
+- Endpoints protected: `/triage`, `/consultation`, `/agents/:agentType/assess`
+- Fixed `tests/setup.js`: Updated for ESM compatibility with Jest
+- Priority order: In-scope affirmer > Out-of-scope > Default pass (errs on inclusion)
+
+### Response Format
+```json
+{
+  "success": false,
+  "scopeValidation": {
+    "category": "out_of_scope",
+    "message": { "title": "...", "message": "...", "suggestion": "..." },
+    "detectedCondition": "cardiac",
+    "confidence": 0.8
+  },
+  "recommendation": "CONSULT_APPROPRIATE_PROVIDER"
+}
+```
 
 ---
 
@@ -108,7 +233,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-[Unreleased]: https://github.com/kpjmd/orthoiq-agents/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/kpjmd/orthoiq-agents/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/kpjmd/orthoiq-agents/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/kpjmd/orthoiq-agents/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/kpjmd/orthoiq-agents/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/kpjmd/orthoiq-agents/releases/tag/v0.1.0

@@ -40,7 +40,7 @@ const OUT_OF_SCOPE_PATTERNS = {
     excludeIfPresent: ['abdominal muscle', 'core injury', 'oblique strain']
   },
   respiratory: {
-    terms: ['asthma', 'copd', 'lung disease', 'bronchitis'],
+    terms: ['asthma', 'copd', 'lung disease', 'bronchitis', 'wheezing', 'shortness of breath', 'breathing difficulty', 'difficulty breathing'],
     excludeIfPresent: ['chest wall', 'rib pain', 'hurts to breathe']
   },
   mental_health_standalone: {

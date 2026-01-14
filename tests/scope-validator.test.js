@@ -82,6 +82,18 @@ describe('Scope Validator', () => {
       expect(result.detectedCategory).toBe('respiratory');
     });
 
+    test('rejects wheezing queries', () => {
+      const result = validateScope('wheezing after exercise');
+      expect(result.passToAgent).toBe(false);
+      expect(result.detectedCategory).toBe('respiratory');
+    });
+
+    test('rejects shortness of breath queries', () => {
+      const result = validateScope('I have shortness of breath when climbing stairs');
+      expect(result.passToAgent).toBe(false);
+      expect(result.detectedCategory).toBe('respiratory');
+    });
+
     test('rejects standalone mental health queries', () => {
       const result = validateScope('I have bipolar disorder');
       expect(result.passToAgent).toBe(false);
